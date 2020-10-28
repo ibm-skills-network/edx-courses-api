@@ -95,7 +95,7 @@ setup(
         'Programming Language :: Python :: 3.8',
     ],
     entry_points={
-        "lms.djangoapp": [
+        "cms.djangoapp": [
             "edx_courses_api = edx_courses_api.apps:EdxCoursesApiConfig",
         ],
     }

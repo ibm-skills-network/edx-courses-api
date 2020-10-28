@@ -2,4 +2,4 @@
 -c constraints.txt
 
 Django>=1.11              # Web application framework
-
+djangorestframework>=3.9

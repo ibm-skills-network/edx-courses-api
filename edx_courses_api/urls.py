@@ -1,9 +1,11 @@
 """
 URLs for edx_courses_api.
 """
+from django.conf import settings
 from django.conf.urls import url
-from django.views.generic import TemplateView
+
+from .views import CourseView
 
 urlpatterns = [
-    url(r'', TemplateView.as_view(template_name="edx_courses_api/base.html")),
+    url(r'^{}'.format(settings.COURSE_KEY_PATTERN), CourseView.as_view(), name='course'),
 ]

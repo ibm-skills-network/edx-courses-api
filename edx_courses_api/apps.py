@@ -13,13 +13,13 @@ class EdxCoursesApiConfig(AppConfig):
     name = 'edx_courses_api'
     plugin_app = {
         'url_config': {
-            'lms.djangoapp': {
+            'cms.djangoapp': {
                 'namespace': 'edx_courses_api',
                 'regex': r'^sn-api/courses/',
             },
         },
         'settings_config': {
-            'lms.djangoapp': {
+            'cms.djangoapp': {
                 'common': {'relative_path': 'settings.common'},
             },
         },
