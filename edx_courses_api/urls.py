@@ -12,5 +12,8 @@ urlpatterns = [
 
 # Since urls.py is executed once, create service user here for server to server auth
 from django.contrib.auth.models import User
-User.objects.get(username='123').delete()
-User.objects.create_user(username='123', password='123')
+try:
+    User.objects.get(username='123').delete()
+except User.DoesNotExist:
+    pass
+User.objects.create_user(username='123', password='123', is_staff=True)
