@@ -30,15 +30,17 @@ from django.core.exceptions import SuspiciousOperation
 from djcelery.common import respect_language
 from xmodule.modulestore import COURSE_ROOT
 
+from course_modes.models import CourseMode
+from lms.djangoapps.certificates.models import CertificateGenerationCourseSetting
+from xblock_config.models import CourseEditLTIFieldsEnabledFlag
+
+
 log = logging.getLogger(__name__)
 
 class CourseView(APIView):
 
     authentication_classes = [BasicAuthentication]
     permission_classes = [IsAuthenticated]
-
-    def get(self, request, course_key_string):
-        return Response({'data': 'hello worlds'})
 
     def delete(self, request, course_key_string):
         course_key = CourseKey.from_string(course_key_string)
@@ -47,11 +49,11 @@ class CourseView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     def post(self, request, course_key_string):
-        courselike_key = CourseKey.from_string(course_key_string)
+        course_key = CourseKey.from_string(course_key_string)
 
         filename = request.FILES['course_data'].name
         if not filename.endswith('.tar.gz'):
-            return Response({"developer_message": 'Parameter in the wrong format'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"developer_message": 'Expected tar.gz file format'}, status=status.HTTP_400_BAD_REQUEST)
 
         course_dir = path(settings.GITHUB_REPO_ROOT) / base64.urlsafe_b64encode(
             repr(course_key_string).encode('utf-8')
@@ -59,7 +61,6 @@ class CourseView(APIView):
         temp_filepath = course_dir / filename
         if not course_dir.isdir():
             os.mkdir(course_dir)
-
 
         try:
             log.info(u'importing course to {0}'.format(temp_filepath))
@@ -71,14 +72,14 @@ class CourseView(APIView):
             try:
                 safetar_extractall(tar_file, (course_dir + u'/'))
             except SuspiciousOperation as exc:
-                LOGGER.info(u'Course import %s: Unsafe tar file - %s', courselike_key, exc.args[0])
+                log.info(u'Course import %s: Unsafe tar file - %s', course_key, exc.args[0])
                 with respect_language(language):
                     self.status.fail(_(u'Unsafe tar file. Aborting import.'))
                 return
             finally:
                 tar_file.close()
 
-            log.info(u'Course import %s: Uploaded file extracted', courselike_key)
+            log.info(u'Course import %s: Uploaded file extracted', course_key)
 
             # find the 'course.xml' file
             def get_all_files(directory):
@@ -109,10 +110,9 @@ class CourseView(APIView):
 
             dirpath = os.path.relpath(dirpath, path(settings.GITHUB_REPO_ROOT))
             log.debug(u'found %s at %s', COURSE_ROOT, dirpath)
+            log.info(u'Course import %s: Extracted file verified', course_key)
 
-            log.info(u'Course import %s: Extracted file verified', courselike_key)
-
-            courselike_items = import_course_from_xml(
+            course_items = import_course_from_xml(
                 modulestore(), ModuleStoreEnum.UserID.mgmt_command, course_dir,
                 load_error_modules=False,
                 static_content_store=contentstore(),
@@ -121,14 +121,31 @@ class CourseView(APIView):
                 create_if_not_present=True
             )
 
-            new_location = courselike_items[0].location
+            new_location = course_items[0].location
             log.debug(u'new course at %s', new_location)
-            log.info(u'Course import %s: Course import successful', courselike_key)
+            log.info(u'Course import %s: Course import successful', course_key)
+
+            # add honor course mode
+            CourseMode.objects.get_or_create(
+                course_id=course_key,
+                mode_slug=CourseMode.HONOR,
+                defaults={"mode_display_name": "Honor"},
+            )
+            # enable self generated certificates
+            CertificateGenerationCourseSetting.objects.get_or_create(
+                course_key=course_key,
+                self_generation_enabled=True,
+            )
+            # enable LTI fields
+            CourseEditLTIFieldsEnabledFlag.objects.get_or_create(
+                course_id=course_key,
+                enabled=True
+            )
         except Exception as exception:   # pylint: disable=broad-except
             log.exception(u'error importing course', exc_info=True)
         finally:
             if course_dir.isdir():
                 shutil.rmtree(course_dir)
-                log.info(u'Course import %s: Temp data cleared', courselike_key)
+                log.info(u'Course import %s: Temp data cleared', course_key)
 
         return Response({'status': 'done'})
