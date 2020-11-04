@@ -7,14 +7,11 @@ from path import Path as path
 from django.core.files import File
 from django.conf import settings
 
-
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.authentication import BasicAuthentication
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.exceptions import APIException
-from six import text_type
 
 # edx imports
 from xmodule.contentstore.django import contentstore
@@ -23,8 +20,6 @@ from xmodule.modulestore.xml_importer import import_course_from_xml
 from xmodule.modulestore.django import modulestore
 from cms.djangoapps.contentstore.utils import delete_course
 from opaque_keys.edx.keys import CourseKey
-from contentstore.storage import course_import_export_storage
-from contentstore.tasks import import_olx
 from openedx.core.lib.extract_tar import safetar_extractall
 from django.core.exceptions import SuspiciousOperation
 from djcelery.common import respect_language
@@ -49,9 +44,17 @@ class CourseView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     def post(self, request, course_key_string):
+        """
+        import a course given a tar.gz file
+        see on edx-platform:
+        https://github.com/edx/edx-platform/blob/master/cms/djangoapps/contentstore/tasks.py#L373
+        """
         course_key = CourseKey.from_string(course_key_string)
 
-        filename = request.FILES['course_data'].name
+        try:
+            filename = request.FILES['course_data'].name
+        except KeyError:
+            return Response({"developer_message": 'Expected {"course_data": tarfile} in the request body'}, status=status.HTTP_400_BAD_REQUEST)
         if not filename.endswith('.tar.gz'):
             return Response({"developer_message": 'Expected tar.gz file format'}, status=status.HTTP_400_BAD_REQUEST)
 
