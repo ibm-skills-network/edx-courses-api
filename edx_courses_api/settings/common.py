@@ -11,5 +11,7 @@ def plugin_settings(settings):
     """
     settings.AUTH_USERNAME = os.environ.get('AUTH_USERNAME')
     settings.AUTH_PASSWORD = os.environ.get('AUTH_PASSWORD')
+    settings.EMAIL = settings.AUTH_USERNAME + '@skills.network'
+
     if not settings.AUTH_USERNAME or not settings.AUTH_PASSWORD:
         raise Exception('AUTH_USERNAME or AUTH_PASSWORD environment variables not set')
