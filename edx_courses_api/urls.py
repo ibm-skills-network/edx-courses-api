@@ -16,4 +16,4 @@ try:
     User.objects.get(username=settings.AUTH_USERNAME).delete()
 except User.DoesNotExist:
     pass
-User.objects.create_user(username=settings.AUTH_USERNAME, password=settings.AUTH_PASSWORD, is_staff=True)
+User.objects.create_user(username=settings.AUTH_USERNAME, password=settings.AUTH_PASSWORD, email=settings.EMAIL, is_staff=True)
