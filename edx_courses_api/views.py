@@ -55,8 +55,8 @@ class CourseView(APIView):
             filename = request.FILES['course_data'].name
         except KeyError:
             return Response({"developer_message": 'Expected {"course_data": tarfile} in the request body'}, status=status.HTTP_400_BAD_REQUEST)
-        if not filename.endswith('.tar.gz'):
-            return Response({"developer_message": 'Expected tar.gz file format'}, status=status.HTTP_400_BAD_REQUEST)
+        if not (filename.endswith('.tar.gz') or filename.endswith('.tgz')):
+            return Response({"developer_message": 'Expected tar.gz or tgz file format'}, status=status.HTTP_400_BAD_REQUEST)
 
         course_dir = path(settings.GITHUB_REPO_ROOT) / base64.urlsafe_b64encode(
             repr(course_key_string).encode('utf-8')
