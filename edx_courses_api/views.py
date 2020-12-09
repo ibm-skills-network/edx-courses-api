@@ -115,6 +115,10 @@ class CourseView(APIView):
             log.debug(u'found %s at %s', COURSE_ROOT, dirpath)
             log.info(u'Course import %s: Extracted file verified', course_key)
 
+            # TODO: remove these 2 lines once a permanent solution is added to curator
+            course_run = course_key_string.split('+')[-1]
+            fix_course_run(dirpath, course_run)
+
             course_items = import_course_from_xml(
                 modulestore(), ModuleStoreEnum.UserID.mgmt_command, course_dir,
                 load_error_modules=False,
@@ -152,3 +156,30 @@ class CourseView(APIView):
                 log.info(u'Course import %s: Temp data cleared', course_key)
 
         return Response({'status': 'done'})
+
+# TODO: Remove this function once a more permanent solution is added to curator
+def fix_course_run(dirpath, new_value):
+    def replace_url_name():
+        file_path = os.path.join(dirpath, COURSE_ROOT)
+        with open(file_path) as f:
+            data = f.read()
+            data = re.sub('url_name="[^"]*"', 'url_name="{}"'.format(new_value), data)
+
+        with open(file_path, "w") as f:
+            f.write(data)
+
+    def rename_policies():
+        file_path = os.path.join(dirpath, 'policies')
+        dir = [d for d in os.listdir(file_path) if os.path.isdir(os.path.join(file_path, d))][0]
+        if dir is None:
+            return
+        os.rename(os.path.join(file_path, dir), os.path.join(file_path, new_value))
+
+    def rename_course_xml():
+        file_path = os.path.join(dirpath, 'course')
+        for file in glob.glob(os.path.join(file_path, "*.xml")):
+            os.rename(file, os.path.join(file_path, '{}.xml'.format(new_value)))
+
+    replace_url_name()
+    rename_policies()
+    rename_course_xml()
