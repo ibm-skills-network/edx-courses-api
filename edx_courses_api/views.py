@@ -3,6 +3,8 @@ import logging
 import os
 import shutil
 import tarfile
+import re
+import glob
 from path import Path as path
 from django.core.files import File
 from django.conf import settings
@@ -111,13 +113,13 @@ class CourseView(APIView):
                     self.status.fail(_(u'Could not find the {0} file in the package.').format(COURSE_ROOT))
                     return
 
-            dirpath = os.path.relpath(dirpath, path(settings.GITHUB_REPO_ROOT))
-            log.debug(u'found %s at %s', COURSE_ROOT, dirpath)
-            log.info(u'Course import %s: Extracted file verified', course_key)
-
             # TODO: remove these 2 lines once a permanent solution is added to curator
             course_run = course_key_string.split('+')[-1]
             fix_course_run(dirpath, course_run)
+
+            dirpath = os.path.relpath(dirpath, path(settings.GITHUB_REPO_ROOT))
+            log.debug(u'found %s at %s', COURSE_ROOT, dirpath)
+            log.info(u'Course import %s: Extracted file verified', course_key)
 
             course_items = import_course_from_xml(
                 modulestore(), ModuleStoreEnum.UserID.mgmt_command, course_dir,
