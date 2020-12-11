@@ -24,7 +24,6 @@ from cms.djangoapps.contentstore.utils import delete_course
 from opaque_keys.edx.keys import CourseKey
 from openedx.core.lib.extract_tar import safetar_extractall
 from django.core.exceptions import SuspiciousOperation
-from djcelery.common import respect_language
 from xmodule.modulestore import COURSE_ROOT
 
 from course_modes.models import CourseMode
@@ -77,10 +76,9 @@ class CourseView(APIView):
             try:
                 safetar_extractall(tar_file, (course_dir + u'/'))
             except SuspiciousOperation as exc:
-                log.info(u'Course import %s: Unsafe tar file - %s', course_key, exc.args[0])
-                with respect_language(language):
-                    self.status.fail(_(u'Unsafe tar file. Aborting import.'))
-                return
+                err = u'Course import %s: Unsafe tar file - %s', course_key, exc.args[0]
+                log.info(err)
+                return Response({'status': 'fail', 'reason': err}, status=status.HTTP_400_BAD_REQUEST)
             finally:
                 tar_file.close()
 
@@ -109,9 +107,9 @@ class CourseView(APIView):
 
             dirpath = get_dir_for_filename(course_dir, COURSE_ROOT)
             if not dirpath:
-                with respect_language(language):
-                    self.status.fail(_(u'Could not find the {0} file in the package.').format(COURSE_ROOT))
-                    return
+                err = u'Could not find the {0} file in the package.'.format(COURSE_ROOT)
+                log.info(err)
+                return Response({'status': 'fail', 'reason': err}, status=status.HTTP_400_BAD_REQUEST)
 
             # TODO: remove these 2 lines once a permanent solution is added to curator
             course_run = course_key_string.split('+')[-1]
