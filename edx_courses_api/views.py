@@ -22,6 +22,7 @@ from xblock_config.models import CourseEditLTIFieldsEnabledFlag
 
 log = logging.getLogger(__name__)
 
+USERNAME = 'admin' # the user who will be associated with new courses
 
 class CourseView(APIView):
 
@@ -38,8 +39,7 @@ class CourseView(APIView):
         course_key = CourseKey.from_string(course_key_string)
         # Create the course
         try:
-            # TODO: change user to 'admin'
-            user = User.objects.get(username='edx')
+            user = User.objects.get(username=USERNAME)
             new_course = create_new_course_in_store(
                 "split",
                 user,
