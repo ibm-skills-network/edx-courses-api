@@ -40,13 +40,15 @@ class CourseView(APIView):
         # Create the course
         try:
             user = User.objects.get(username=USERNAME)
+            course_name = request.data.get("name", "Empty")
+            fields = { "display_name": course_name }
             new_course = create_new_course_in_store(
                 "split",
                 user,
                 course_key.org,
                 course_key.course,
                 course_key.run,
-                {}
+                fields
             )
             msg = u"Created {}".format(new_course.id)
             log.info(msg)
