@@ -83,21 +83,22 @@ class CourseView(APIView):
         )
         log.info('Finalized course {}'.format(str(course_key)))
 
-@api_view(['POST'])
-@authentication_classes([BasicAuthentication])
-@permission_classes([IsAuthenticated])
-def hide(request, course_key_string):
-    course_key = CourseKey.from_string(course_key_string)
-    log.info('setting catalog visibility for {} to "none"'.format(course_key))
-
+def set_visibility(course_key, visibility):
     try:
         course = CourseOverview.get_from_id(course_key)
     except CourseOverview.DoesNotExist:
         raise Http404
 
-    course.catalog_visibility = "none"
+    log.info('setting catalog visibility for {} to {}"'.format(course_key, visibility))
+    course.catalog_visibility = visibility
     course.save()
 
+@api_view(['POST'])
+@authentication_classes([BasicAuthentication])
+@permission_classes([IsAuthenticated])
+def hide(request, course_key_string):
+    course_key = CourseKey.from_string(course_key_string)
+    set_visibility(course_key, "none")
     return Response({'detail': "{} - catalog visibility set to 'none'".format(course_key)})
 
 @api_view(['POST'])
@@ -105,14 +106,5 @@ def hide(request, course_key_string):
 @permission_classes([IsAuthenticated])
 def show(request, course_key_string):
     course_key = CourseKey.from_string(course_key_string)
-    log.info('setting catalog visibility for {} to "both"'.format(course_key))
-
-    try:
-        course = CourseOverview.get_from_id(course_key)
-    except CourseOverview.DoesNotExist:
-        raise Http404
-
-    course.catalog_visibility = "both"
-    course.save()
-
+    set_visibility(course_key, "both")
     return Response({'detail': "{} - catalog visibility set to 'both'".format(course_key)})
