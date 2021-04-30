@@ -6,7 +6,7 @@ Exposes API to import a course from a course archive file, or delete a course
 Development
 -------------
 
-https://wiki.skills.network/Team/OpenEdXDevelopment/CreateADjangoAppPlugin
+https://wiki.skills.network/en/OpenEdXDevelopment/CreateADjangoAppPlugin
 
 License
 -------
