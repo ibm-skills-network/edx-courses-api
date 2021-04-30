@@ -1,6 +1,9 @@
 import logging
 
+from django.http.response import Http404
+
 from rest_framework.views import APIView
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.response import Response
 from rest_framework.exceptions import ParseError
 from rest_framework import status
@@ -9,6 +12,7 @@ from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth.models import User
 
 # edx imports
+from openedx.core.djangoapps.content.course_overviews.models import CourseOverview
 from cms.djangoapps.contentstore.views.course import create_new_course_in_store
 from cms.djangoapps.contentstore.utils import delete_course
 from xmodule.modulestore.exceptions import DuplicateCourseError
@@ -78,3 +82,37 @@ class CourseView(APIView):
             enabled=True
         )
         log.info('Finalized course {}'.format(str(course_key)))
+
+@api_view(['POST'])
+@authentication_classes([BasicAuthentication])
+@permission_classes([IsAuthenticated])
+def hide(request, course_key_string):
+    course_key = CourseKey.from_string(course_key_string)
+    log.info('setting catalog visibility for {} to "none"'.format(course_key))
+
+    try:
+        course = CourseOverview.get_from_id(course_key)
+    except CourseOverview.DoesNotExist:
+        raise Http404
+
+    course.catalog_visibility = "none"
+    course.save()
+
+    return Response({'detail': "{} - catalog visibility set to 'none'".format(course_key)})
+
+@api_view(['POST'])
+@authentication_classes([BasicAuthentication])
+@permission_classes([IsAuthenticated])
+def show(request, course_key_string):
+    course_key = CourseKey.from_string(course_key_string)
+    log.info('setting catalog visibility for {} to "both"'.format(course_key))
+
+    try:
+        course = CourseOverview.get_from_id(course_key)
+    except CourseOverview.DoesNotExist:
+        raise Http404
+
+    course.catalog_visibility = "both"
+    course.save()
+
+    return Response({'detail': "{} - catalog visibility set to 'both'".format(course_key)})
