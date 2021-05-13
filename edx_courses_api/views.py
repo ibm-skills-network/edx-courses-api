@@ -4,7 +4,6 @@ import logging
 import os
 
 from django.conf import settings
-from django.http.response import Http404
 from django.http import Http404, StreamingHttpResponse
 from wsgiref.util import FileWrapper
 
