@@ -13,7 +13,7 @@ from rest_framework.response import Response
 from rest_framework.exceptions import ParseError
 from rest_framework import status
 from rest_framework.authentication import BasicAuthentication
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, BasePermission
 from django.contrib.auth.models import User
 from django.core.files.storage import FileSystemStorage
 
@@ -23,7 +23,11 @@ from cms.djangoapps.contentstore.views.course import create_new_course_in_store
 from cms.djangoapps.contentstore.utils import delete_course
 from xmodule.modulestore.exceptions import DuplicateCourseError
 from xmodule.modulestore import ModuleStoreEnum
-from opaque_keys.edx.keys import CourseKey
+from opaque_keys.edx.keys import CourseKey, UsageKey
+from xblock.django.request import django_to_webob_request, webob_to_django_response
+from openedx.core.lib.xblock_utils import get_aside_from_xblock, is_xblock_aside
+from contentstore.views.item import StudioEditModuleRuntime
+from xblock.exceptions import NoSuchHandlerError
 
 from course_modes.models import CourseMode
 from lms.djangoapps.certificates.models import CertificateGenerationCourseSetting
@@ -36,6 +40,8 @@ from contentstore.tasks import CourseExportTask, CourseImportTask, export_olx, i
 from contentstore.utils import reverse_course_url, reverse_library_url
 from user_tasks.models import UserTaskArtifact, UserTaskStatus
 from user_tasks.conf import settings as user_tasks_settings
+
+from .permissions import IsSiteAdminUser
 
 
 log = logging.getLogger(__name__)
@@ -239,6 +245,69 @@ def export_output(request, course_key_string):
                 artifact.file.close()
     else:
         raise Http404
+
+@api_view(['POST'])
+@authentication_classes([BasicAuthentication])
+@permission_classes([IsAuthenticated])
+def submit_studio_edits(request, course_key_string, usage_key_string, suffix=''):
+    usage_key = UsageKey.from_string(usage_key_string)
+    usage_key = usage_key.replace(course_key=modulestore().fill_in_run(usage_key.course_key))
+    store = modulestore()
+    item = None
+    log.info('updating xblock content (course_id: {}, xblock_id: {})'.format(course_key_string, usage_key_string))
+    with store.bulk_operations(usage_key.course_key):
+        item = store.get_item(usage_key, depth=None)
+        # item is an instance of StudioEditableXBlockMixin, learn more below
+        # https://github.com/edx/XBlock/blob/master/xblock/mixins.py#L35
+        # https://github.com/edx/xblock-utils/blob/0a8589acc99ecc608fb8fe4f6ad862eaf2bbc3ae/xblockutils/studio_editable.py#L203
+        resp = item.submit_studio_edits(request)
+        log.info(resp)
+    log.info('xblock content is updated (course_id: {}, xblock_id: {})'.format(course_key_string, usage_key_string))
+    return Response({'success': True})
+
+@api_view(['POST'])
+@authentication_classes([BasicAuthentication])
+@permission_classes([IsAuthenticated, IsSiteAdminUser])
+def xblock_handler(request, course_key_string, usage_key_string, handler, suffix=''):
+    """
+    Dispatch an AJAX action to an xblock
+
+    Args:
+        usage_id: The usage-id of the block to dispatch to
+        handler (str): The handler to execute
+        suffix (str): The remainder of the url to be passed to the handler
+
+    Returns:
+        :class:`django.http.HttpResponse`: The response from the handler, converted to a
+            django response
+    """
+    usage_key = UsageKey.from_string(usage_key_string)
+
+    # Let the module handle the AJAX
+    req = django_to_webob_request(request)
+
+    try:
+        if is_xblock_aside(usage_key):
+            # Get the descriptor for the block being wrapped by the aside (not the aside itself)
+            descriptor = modulestore().get_item(usage_key.usage_key)
+            handler_descriptor = get_aside_from_xblock(descriptor, usage_key.aside_type)
+            asides = [handler_descriptor]
+        else:
+            descriptor = modulestore().get_item(usage_key)
+            handler_descriptor = descriptor
+            asides = []
+        handler_descriptor.xmodule_runtime = StudioEditModuleRuntime(request.user)
+        resp = handler_descriptor.handle(handler, req, suffix)
+    except NoSuchHandlerError:
+        log.info(u"XBlock %s attempted to access missing handler %r", handler_descriptor, handler, exc_info=True)
+        raise Http404
+
+    # unintentional update to handle any side effects of handle call
+    # could potentially be updating actual course data or simply caching its values
+    modulestore().update_item(descriptor, request.user.id, asides=asides)
+
+    return webob_to_django_response(resp)
+
 
 def _latest_task_status(request, course_key_string, view_func=None):
     """
