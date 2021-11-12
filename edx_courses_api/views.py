@@ -13,7 +13,7 @@ from rest_framework.response import Response
 from rest_framework.exceptions import ParseError
 from rest_framework import status
 from rest_framework.authentication import BasicAuthentication
-from rest_framework.permissions import IsAuthenticated, BasePermission
+from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth.models import User
 from django.core.files.storage import FileSystemStorage
 
@@ -28,6 +28,7 @@ from xblock.django.request import django_to_webob_request, webob_to_django_respo
 from openedx.core.lib.xblock_utils import get_aside_from_xblock, is_xblock_aside
 from contentstore.views.item import StudioEditModuleRuntime
 from xblock.exceptions import NoSuchHandlerError
+from cms.djangoapps.contentstore.views.item import _get_module_info, _get_xblock, _save_xblock
 
 from course_modes.models import CourseMode
 from lms.djangoapps.certificates.models import CertificateGenerationCourseSetting
@@ -248,25 +249,6 @@ def export_output(request, course_key_string):
 
 @api_view(['POST'])
 @authentication_classes([BasicAuthentication])
-@permission_classes([IsAuthenticated])
-def submit_studio_edits(request, course_key_string, usage_key_string, suffix=''):
-    usage_key = UsageKey.from_string(usage_key_string)
-    usage_key = usage_key.replace(course_key=modulestore().fill_in_run(usage_key.course_key))
-    store = modulestore()
-    item = None
-    log.info('updating xblock content (course_id: {}, xblock_id: {})'.format(course_key_string, usage_key_string))
-    with store.bulk_operations(usage_key.course_key):
-        item = store.get_item(usage_key, depth=None)
-        # item is an instance of StudioEditableXBlockMixin, learn more below
-        # https://github.com/edx/XBlock/blob/master/xblock/mixins.py#L35
-        # https://github.com/edx/xblock-utils/blob/0a8589acc99ecc608fb8fe4f6ad862eaf2bbc3ae/xblockutils/studio_editable.py#L203
-        resp = item.submit_studio_edits(request)
-        log.info(resp)
-    log.info('xblock content is updated (course_id: {}, xblock_id: {})'.format(course_key_string, usage_key_string))
-    return Response({'success': True})
-
-@api_view(['POST'])
-@authentication_classes([BasicAuthentication])
 @permission_classes([IsAuthenticated, IsSiteAdminUser])
 def xblock_handler(request, course_key_string, usage_key_string, handler, suffix=''):
     """
@@ -280,6 +262,11 @@ def xblock_handler(request, course_key_string, usage_key_string, handler, suffix
     Returns:
         :class:`django.http.HttpResponse`: The response from the handler, converted to a
             django response
+
+    Example:
+    POST ${STUDIO_URL}/sn-api/courses/{course_key}/xblocks/{usage_key}/handler/{handler}/
+
+    See https://github.com/edx/edx-platform/blob/open-release/juniper.master/cms/djangoapps/contentstore/views/component.py#L449
     """
     usage_key = UsageKey.from_string(usage_key_string)
 
@@ -305,9 +292,38 @@ def xblock_handler(request, course_key_string, usage_key_string, handler, suffix
     # unintentional update to handle any side effects of handle call
     # could potentially be updating actual course data or simply caching its values
     modulestore().update_item(descriptor, request.user.id, asides=asides)
-
+    log.info('xblock content is updated (course_id: {}, xblock_id: {})'.format(course_key_string, usage_key_string))
     return webob_to_django_response(resp)
 
+@api_view(['GET', 'POST'])
+@authentication_classes([BasicAuthentication])
+@permission_classes([IsAuthenticated, IsSiteAdminUser])
+def xblock_item_handler(request, course_key_string, usage_key_string):
+    """
+    See https://github.com/edx/edx-platform/blob/open-release/juniper.master/cms/djangoapps/contentstore/views/item.py#L104
+    """
+    usage_key = usage_key_with_run(usage_key_string)
+
+    if request.method == 'GET':
+        with modulestore().bulk_operations(usage_key.course_key):
+            response = _get_module_info(_get_xblock(usage_key, request.user))
+        return Response(response)
+    elif request.method in ('PUT', 'POST'):
+        return _save_xblock(
+            request.user,
+            _get_xblock(usage_key, request.user),
+            data=request.data.get('data'),
+            children_strings=request.data.get('children'),
+            metadata=request.data.get('metadata'),
+            nullout=request.data.get('nullout'),
+            grader_type=request.data.get('graderType'),
+            is_prereq=request.data.get('isPrereq'),
+            prereq_usage_key=request.data.get('prereqUsageKey'),
+            prereq_min_score=request.data.get('prereqMinScore'),
+            prereq_min_completion=request.data.get('prereqMinCompletion'),
+            publish=request.data.get('publish'),
+            fields=request.data.get('fields'),
+        )
 
 def _latest_task_status(request, course_key_string, view_func=None):
     """
@@ -330,3 +346,11 @@ def send_tarball(tarball, size):
     response['Content-Disposition'] = u'attachment; filename=%s' % os.path.basename(tarball.name)
     response['Content-Length'] = size
     return response
+
+def usage_key_with_run(usage_key_string):
+    """
+    Converts usage_key_string to a UsageKey, adding a course run if necessary
+    """
+    usage_key = UsageKey.from_string(usage_key_string)
+    usage_key = usage_key.replace(course_key=modulestore().fill_in_run(usage_key.course_key))
+    return usage_key
