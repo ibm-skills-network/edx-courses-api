@@ -23,7 +23,12 @@ from cms.djangoapps.contentstore.views.course import create_new_course_in_store
 from cms.djangoapps.contentstore.utils import delete_course
 from xmodule.modulestore.exceptions import DuplicateCourseError
 from xmodule.modulestore import ModuleStoreEnum
-from opaque_keys.edx.keys import CourseKey
+from opaque_keys.edx.keys import CourseKey, UsageKey
+from xblock.django.request import django_to_webob_request, webob_to_django_response
+from openedx.core.lib.xblock_utils import get_aside_from_xblock, is_xblock_aside
+from contentstore.views.item import StudioEditModuleRuntime
+from xblock.exceptions import NoSuchHandlerError
+from cms.djangoapps.contentstore.views.item import _get_module_info, _get_xblock, _save_xblock
 
 from course_modes.models import CourseMode
 from lms.djangoapps.certificates.models import CertificateGenerationCourseSetting
@@ -36,6 +41,8 @@ from contentstore.tasks import CourseExportTask, CourseImportTask, export_olx, i
 from contentstore.utils import reverse_course_url, reverse_library_url
 from user_tasks.models import UserTaskArtifact, UserTaskStatus
 from user_tasks.conf import settings as user_tasks_settings
+
+from .permissions import IsSiteAdminUser
 
 
 log = logging.getLogger(__name__)
@@ -240,6 +247,84 @@ def export_output(request, course_key_string):
     else:
         raise Http404
 
+@api_view(['POST'])
+@authentication_classes([BasicAuthentication])
+@permission_classes([IsAuthenticated, IsSiteAdminUser])
+def xblock_handler(request, course_key_string, usage_key_string, handler, suffix=''):
+    """
+    Dispatch an AJAX action to an xblock
+
+    Args:
+        usage_id: The usage-id of the block to dispatch to
+        handler (str): The handler to execute
+        suffix (str): The remainder of the url to be passed to the handler
+
+    Returns:
+        :class:`django.http.HttpResponse`: The response from the handler, converted to a
+            django response
+
+    Example:
+    POST ${STUDIO_URL}/sn-api/courses/{course_key}/xblocks/{usage_key}/handler/{handler}/
+
+    See https://github.com/edx/edx-platform/blob/open-release/juniper.master/cms/djangoapps/contentstore/views/component.py#L449
+    """
+    usage_key = UsageKey.from_string(usage_key_string)
+
+    # Let the module handle the AJAX
+    req = django_to_webob_request(request)
+
+    try:
+        if is_xblock_aside(usage_key):
+            # Get the descriptor for the block being wrapped by the aside (not the aside itself)
+            descriptor = modulestore().get_item(usage_key.usage_key)
+            handler_descriptor = get_aside_from_xblock(descriptor, usage_key.aside_type)
+            asides = [handler_descriptor]
+        else:
+            descriptor = modulestore().get_item(usage_key)
+            handler_descriptor = descriptor
+            asides = []
+        handler_descriptor.xmodule_runtime = StudioEditModuleRuntime(request.user)
+        resp = handler_descriptor.handle(handler, req, suffix)
+    except NoSuchHandlerError:
+        log.info(u"XBlock %s attempted to access missing handler %r", handler_descriptor, handler, exc_info=True)
+        raise Http404
+
+    # unintentional update to handle any side effects of handle call
+    # could potentially be updating actual course data or simply caching its values
+    modulestore().update_item(descriptor, request.user.id, asides=asides)
+    log.info('xblock content is updated (course_id: {}, xblock_id: {})'.format(course_key_string, usage_key_string))
+    return webob_to_django_response(resp)
+
+@api_view(['GET', 'POST'])
+@authentication_classes([BasicAuthentication])
+@permission_classes([IsAuthenticated, IsSiteAdminUser])
+def xblock_item_handler(request, course_key_string, usage_key_string):
+    """
+    See https://github.com/edx/edx-platform/blob/open-release/juniper.master/cms/djangoapps/contentstore/views/item.py#L104
+    """
+    usage_key = usage_key_with_run(usage_key_string)
+
+    if request.method == 'GET':
+        with modulestore().bulk_operations(usage_key.course_key):
+            response = _get_module_info(_get_xblock(usage_key, request.user))
+        return Response(response)
+    elif request.method in ('PUT', 'POST'):
+        return _save_xblock(
+            request.user,
+            _get_xblock(usage_key, request.user),
+            data=request.data.get('data'),
+            children_strings=request.data.get('children'),
+            metadata=request.data.get('metadata'),
+            nullout=request.data.get('nullout'),
+            grader_type=request.data.get('graderType'),
+            is_prereq=request.data.get('isPrereq'),
+            prereq_usage_key=request.data.get('prereqUsageKey'),
+            prereq_min_score=request.data.get('prereqMinScore'),
+            prereq_min_completion=request.data.get('prereqMinCompletion'),
+            publish=request.data.get('publish'),
+            fields=request.data.get('fields'),
+        )
+
 def _latest_task_status(request, course_key_string, view_func=None):
     """
     Get the most recent export status update for the specified course/library
@@ -261,3 +346,11 @@ def send_tarball(tarball, size):
     response['Content-Disposition'] = u'attachment; filename=%s' % os.path.basename(tarball.name)
     response['Content-Length'] = size
     return response
+
+def usage_key_with_run(usage_key_string):
+    """
+    Converts usage_key_string to a UsageKey, adding a course run if necessary
+    """
+    usage_key = UsageKey.from_string(usage_key_string)
+    usage_key = usage_key.replace(course_key=modulestore().fill_in_run(usage_key.course_key))
+    return usage_key
