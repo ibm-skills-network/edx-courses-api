@@ -10,4 +10,5 @@
 
 # code-annotations currently restricts to Django<2.3
 # setting django greater than or equal to 3.2.18 to patch vulnerability
+# more details: https://seclists.org/oss-sec/2023/q1/93
 Django>=3.2.18
