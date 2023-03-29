@@ -32,7 +32,7 @@ from cms.djangoapps.contentstore.views.item import _get_module_info, _get_xblock
 
 from common.djangoapps.course_modes.models import CourseMode
 from lms.djangoapps.certificates.models import CertificateGenerationCourseSetting
-from cms.djangoapps.xblock_config.models import CourseAllowPIISharingInLTIFlag
+from lti_consumer.models import CourseAllowPIISharingInLTIFlag
 from xmodule.modulestore.django import modulestore
 from opaque_keys.edx.locator import LibraryLocator
 from storages.backends.s3boto import S3BotoStorage
