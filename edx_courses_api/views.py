@@ -32,7 +32,7 @@ from cms.djangoapps.contentstore.views.item import _get_module_info, _get_xblock
 
 from common.djangoapps.course_modes.models import CourseMode
 from lms.djangoapps.certificates.models import CertificateGenerationCourseSetting
-from cms.djangoapps.xblock_config.models import CourseEditLTIFieldsEnabledFlag
+from lti_consumer.models import CourseAllowPIISharingInLTIFlag
 from xmodule.modulestore.django import modulestore
 from opaque_keys.edx.locator import LibraryLocator
 from storages.backends.s3boto import S3BotoStorage
@@ -99,7 +99,7 @@ class CourseView(APIView):
             self_generation_enabled=True,
         )
         log.info('Enabling LTI fields')
-        CourseEditLTIFieldsEnabledFlag.objects.get_or_create(
+        CourseAllowPIISharingInLTIFlag.objects.get_or_create(
             course_id=course_key,
             enabled=True
         )
