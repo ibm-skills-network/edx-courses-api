@@ -26,9 +26,9 @@ from xmodule.modulestore import ModuleStoreEnum
 from opaque_keys.edx.keys import CourseKey, UsageKey
 from xblock.django.request import django_to_webob_request, webob_to_django_response
 from openedx.core.lib.xblock_utils import get_aside_from_xblock, is_xblock_aside
-from cms.djangoapps.contentstore.views.item import StudioEditModuleRuntime
+from cms.djangoapps.contentstore.views.block import StudioEditModuleRuntime
 from xblock.exceptions import NoSuchHandlerError
-from cms.djangoapps.contentstore.views.item import _get_module_info, _get_xblock, _save_xblock
+from cms.djangoapps.contentstore.views.block import _get_module_info, _get_xblock, _save_xblock
 
 from common.djangoapps.course_modes.models import CourseMode
 from lms.djangoapps.certificates.models import CertificateGenerationCourseSetting
