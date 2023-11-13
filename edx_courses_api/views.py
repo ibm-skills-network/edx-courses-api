@@ -28,7 +28,7 @@ from xblock.django.request import django_to_webob_request, webob_to_django_respo
 from openedx.core.lib.xblock_utils import get_aside_from_xblock, is_xblock_aside
 from cms.djangoapps.contentstore.views.block import StudioEditModuleRuntime
 from xblock.exceptions import NoSuchHandlerError
-from cms.djangoapps.contentstore.views.block import _get_module_info, _get_xblock, _save_xblock
+from cms.djangoapps.contentstore.views.block import _get_block_info, _get_xblock, _save_xblock
 
 from common.djangoapps.course_modes.models import CourseMode
 from lms.djangoapps.certificates.models import CertificateGenerationCourseSetting
@@ -306,7 +306,7 @@ def xblock_item_handler(request, course_key_string, usage_key_string):
 
     if request.method == 'GET':
         with modulestore().bulk_operations(usage_key.course_key):
-            response = _get_module_info(_get_xblock(usage_key, request.user))
+            response = _get_block_info(_get_xblock(usage_key, request.user))
         return Response(response)
     elif request.method in ('PUT', 'POST'):
         return _save_xblock(
