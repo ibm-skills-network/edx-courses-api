@@ -26,19 +26,19 @@ from xmodule.modulestore import ModuleStoreEnum
 from opaque_keys.edx.keys import CourseKey, UsageKey
 from xblock.django.request import django_to_webob_request, webob_to_django_response
 from openedx.core.lib.xblock_utils import get_aside_from_xblock, is_xblock_aside
-from contentstore.views.item import StudioEditModuleRuntime
+from cms.djangoapps.contentstore.views.block import StudioEditModuleRuntime
 from xblock.exceptions import NoSuchHandlerError
-from cms.djangoapps.contentstore.views.item import _get_module_info, _get_xblock, _save_xblock
+from cms.djangoapps.contentstore.views.block import _get_block_info, _get_xblock, _save_xblock
 
-from course_modes.models import CourseMode
+from common.djangoapps.course_modes.models import CourseMode
 from lms.djangoapps.certificates.models import CertificateGenerationCourseSetting
-from xblock_config.models import CourseEditLTIFieldsEnabledFlag
+from lti_consumer.models import CourseAllowPIISharingInLTIFlag
 from xmodule.modulestore.django import modulestore
 from opaque_keys.edx.locator import LibraryLocator
 from storages.backends.s3boto import S3BotoStorage
-from contentstore.storage import course_import_export_storage
-from contentstore.tasks import CourseExportTask, CourseImportTask, export_olx, import_olx
-from contentstore.utils import reverse_course_url, reverse_library_url
+from cms.djangoapps.contentstore.storage import course_import_export_storage
+from cms.djangoapps.contentstore.tasks import CourseExportTask, CourseImportTask, export_olx, import_olx
+from cms.djangoapps.contentstore.utils import reverse_course_url, reverse_library_url
 from user_tasks.models import UserTaskArtifact, UserTaskStatus
 from user_tasks.conf import settings as user_tasks_settings
 
@@ -99,7 +99,7 @@ class CourseView(APIView):
             self_generation_enabled=True,
         )
         log.info('Enabling LTI fields')
-        CourseEditLTIFieldsEnabledFlag.objects.get_or_create(
+        CourseAllowPIISharingInLTIFlag.objects.get_or_create(
             course_id=course_key,
             enabled=True
         )
@@ -306,7 +306,7 @@ def xblock_item_handler(request, course_key_string, usage_key_string):
 
     if request.method == 'GET':
         with modulestore().bulk_operations(usage_key.course_key):
-            response = _get_module_info(_get_xblock(usage_key, request.user))
+            response = _get_block_info(_get_xblock(usage_key, request.user))
         return Response(response)
     elif request.method in ('PUT', 'POST'):
         return _save_xblock(
