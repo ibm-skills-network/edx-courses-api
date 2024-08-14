@@ -4,16 +4,10 @@ URLs for edx_courses_api.
 from django.conf import settings
 from django.urls import re_path
 
-from .views import CourseView, hide, show, export, export_output, export_status, xblock_handler, xblock_item_handler
+from .views import CourseView, hide, show, export, export_output, export_status
 
 urlpatterns = [
     re_path(fr'^{settings.COURSE_KEY_PATTERN}/$', CourseView.as_view(), name='course'),
-    re_path(fr'^{settings.COURSE_KEY_PATTERN}/xblocks/{settings.USAGE_KEY_PATTERN}?$',
-            xblock_item_handler,
-            name='xblock_item_handler'),
-    re_path(fr'^{settings.COURSE_KEY_PATTERN}/xblocks/(?P<usage_key_string>.*?)/handler/(?P<handler>[^/]*)(?:/(?P<suffix>.*))?$',
-        xblock_handler,
-        name='xblock_handler'),
     re_path(fr'^{settings.COURSE_KEY_PATTERN}/hide/$', hide, name='hide_course'),
     re_path(fr'^{settings.COURSE_KEY_PATTERN}/show/$', show, name='show_course'),
     re_path(fr'^{settings.COURSE_KEY_PATTERN}/export/$', export, name='export'),
