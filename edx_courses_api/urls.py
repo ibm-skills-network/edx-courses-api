@@ -17,14 +17,16 @@ urlpatterns = [
 
 # Since urls.py is executed once, create service user here for server to server auth
 from django.contrib.auth.models import User
+from django.core.exceptions import ImproperlyConfigured
 import logging
 log = logging.getLogger(__name__)
 
-if settings.DATABASES != None and settings.DATABASES['default'] != None and settings.DATABASES['default']['engine'] != None:
-    try:
-        User.objects.get(username=settings.AUTH_USERNAME)
-    except User.DoesNotExist:
-        log.info('CREATING USER WITH USERNAME {}', settings.AUTH_USERNAME)
-        User.objects.create_user(username=settings.AUTH_USERNAME,
-                                        email=settings.EMAIL,
-                                        password=settings.AUTH_PASSWORD, is_staff=True)
+try:
+    User.objects.get(username=settings.AUTH_USERNAME)
+except User.DoesNotExist:
+    log.info('CREATING USER WITH USERNAME {}', settings.AUTH_USERNAME)
+    User.objects.create_user(username=settings.AUTH_USERNAME,
+                                    email=settings.EMAIL,
+                                    password=settings.AUTH_PASSWORD, is_staff=True)
+except ImproperlyConfigured:
+    log.warning("ImproperlyConfigured exception, application not running or configured?")
