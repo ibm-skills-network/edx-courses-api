@@ -30,7 +30,7 @@ from lms.djangoapps.certificates.models import CertificateGenerationCourseSettin
 from lti_consumer.models import CourseAllowPIISharingInLTIFlag
 from xmodule.modulestore.django import modulestore
 from opaque_keys.edx.locator import LibraryLocator
-from storages.backends.s3boto import S3BotoStorage
+from storages.backends.s3boto3 import S3Boto3Storage
 from cms.djangoapps.contentstore.storage import course_import_export_storage
 from cms.djangoapps.contentstore.tasks import CourseExportTask, export_olx
 from cms.djangoapps.contentstore.utils import reverse_course_url, reverse_library_url
@@ -184,7 +184,7 @@ def export_status(request, course_key_string, filename=None):
         artifact = UserTaskArtifact.objects.get(status=task_status, name='Output')
         if isinstance(artifact.file.storage, FileSystemStorage):
             output_url = reverse_course_url('export_output_handler', course_key)
-        elif isinstance(artifact.file.storage, S3BotoStorage):
+        elif isinstance(artifact.file.storage, S3Boto3Storage):
             filename = os.path.basename(artifact.file.name)
             disposition = u'attachment; filename="{}"'.format(filename)
             output_url = artifact.file.storage.url(artifact.file.name, response_headers={
