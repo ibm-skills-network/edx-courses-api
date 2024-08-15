@@ -20,7 +20,7 @@ from django.contrib.auth.models import User
 import logging
 log = logging.getLogger(__name__)
 
-if settings.DATABASES != None and settings.DATABASES['default'] != None and settings.DATABASES['default'].get('ENGINE') != None:
+if settings.DATABASES != None and settings.DATABASES['default'] != {}:
     try:
         User.objects.get(username=settings.AUTH_USERNAME)
     except User.DoesNotExist:
