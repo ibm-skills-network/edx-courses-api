@@ -36,7 +36,7 @@ from cms.djangoapps.contentstore.tasks import CourseExportTask, export_olx
 from cms.djangoapps.contentstore.utils import reverse_course_url, reverse_library_url
 from user_tasks.models import UserTaskArtifact, UserTaskStatus
 from user_tasks.conf import settings as user_tasks_settings
-
+from xblock.django.request import django_to_webob_request, webob_to_django_response
 
 log = logging.getLogger(__name__)
 STATUS_FILTERS = user_tasks_settings.USER_TASKS_STATUS_FILTERS
@@ -261,3 +261,13 @@ def send_tarball(tarball, size):
     response['Content-Disposition'] = u'attachment; filename=%s' % os.path.basename(tarball.name)
     response['Content-Length'] = size
     return response
+
+@api_view(["POST"])
+@authentication_classes([BasicAuthentication])
+@permission_classes([IsAuthenticated])
+def studio_transcript(request, course_key_string, usage_key_string):
+    usage_key = UsageKey.from_string(usage_key_string)
+    descriptor = modulestore().get_item(usage_key)
+    req = django_to_webob_request(request)
+    resp = descriptor.studio_transcript(req, "translation")
+    return webob_to_django_response(resp)
