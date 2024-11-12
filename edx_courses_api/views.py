@@ -266,6 +266,12 @@ def send_tarball(tarball, size):
 @authentication_classes([BasicAuthentication])
 @permission_classes([IsAuthenticated])
 def studio_transcript(request, course_key_string, usage_key_string):
+    """
+    Upload a transcript for a video in Studio. Refer to the link below for expected parameters.
+    see: https://github.com/openedx/edx-platform/blob/d4f3c373269b212471a3d1bc38db5117c872efb5/xmodule/video_block/video_handlers.py#L471
+
+    POST /sn-api/courses/<course_key>/xblock/<xblock_id>/handler/studio_transcript/translation/
+    """
     usage_key = UsageKey.from_string(usage_key_string)
     descriptor = modulestore().get_item(usage_key)
     req = django_to_webob_request(request)
