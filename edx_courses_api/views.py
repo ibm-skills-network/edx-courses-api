@@ -2,6 +2,7 @@ import logging
 import json
 import logging
 import os
+import uuid
 
 from django.conf import settings
 from django.http import Http404, StreamingHttpResponse
@@ -37,6 +38,7 @@ from cms.djangoapps.contentstore.utils import reverse_course_url, reverse_librar
 from user_tasks.models import UserTaskArtifact, UserTaskStatus
 from user_tasks.conf import settings as user_tasks_settings
 from xblock.django.request import django_to_webob_request, webob_to_django_response
+from cms.djangoapps.contentstore.views.transcripts_ajax import upload_transcripts
 
 log = logging.getLogger(__name__)
 STATUS_FILTERS = user_tasks_settings.USER_TASKS_STATUS_FILTERS
@@ -262,7 +264,7 @@ def send_tarball(tarball, size):
     response['Content-Length'] = size
     return response
 
-@api_view(["POST"])
+@api_view(["POST", "DELETE"])
 @authentication_classes([BasicAuthentication])
 @permission_classes([IsAuthenticated])
 def studio_transcript(request, course_key_string, usage_key_string):
@@ -273,7 +275,18 @@ def studio_transcript(request, course_key_string, usage_key_string):
     POST /sn-api/courses/<course_key>/xblock/<xblock_id>/handler/studio_transcript/translation/
     """
     usage_key = UsageKey.from_string(usage_key_string)
+    # TODO: catch `xmodule.modulestore.exceptions.ItemNotFoundError` for when item with usage_key does not exist.
     descriptor = modulestore().get_item(usage_key)
+
+    # no subtitles yet, handle the default case
+    if descriptor.available_translations(descriptor.get_transcripts_info(), verify_assets=True) == []:
+        request.POST._mutable = True
+        request.POST['locator'] = usage_key_string
+        request.POST['edx_video_id'] = descriptor.edx_video_id
+        request.POST._mutable = False
+        request.FILES['transcript-file'] = request.FILES['file']
+        return upload_transcripts(request)
+
     req = django_to_webob_request(request)
     resp = descriptor.studio_transcript(req, "translation")
     return webob_to_django_response(resp)
