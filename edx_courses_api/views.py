@@ -287,6 +287,9 @@ def studio_transcript(request, course_key_string, usage_key_string):
         request.FILES['transcript-file'] = request.FILES['file']
         return upload_transcripts(request)
 
+    request.POST._mutable = True
+    request.POST['edx_video_id'] = descriptor.edx_video_id
+    request.POST._mutable = False
     req = django_to_webob_request(request)
     resp = descriptor.studio_transcript(req, "translation")
     return webob_to_django_response(resp)
