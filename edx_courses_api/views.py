@@ -277,6 +277,7 @@ def studio_transcript(request, course_key_string, usage_key_string):
     usage_key = UsageKey.from_string(usage_key_string)
     # TODO: catch `xmodule.modulestore.exceptions.ItemNotFoundError` for when item with usage_key does not exist.
     descriptor = modulestore().get_item(usage_key)
+    user = User.objects.get(username=USERNAME)
 
     # no subtitles yet, handle the default case
     if descriptor.available_translations(descriptor.get_transcripts_info(), verify_assets=True) == []:
@@ -285,11 +286,20 @@ def studio_transcript(request, course_key_string, usage_key_string):
         request.POST['edx_video_id'] = descriptor.edx_video_id
         request.POST._mutable = False
         request.FILES['transcript-file'] = request.FILES['file']
-        return upload_transcripts(request)
+
+        descriptor.download_track = True
+        descriptor.save_with_metadata(user)
+
+        result = upload_transcripts(request)
+        modulestore().publish(descriptor.location, user.id)
+        return result
 
     request.POST._mutable = True
     request.POST['edx_video_id'] = descriptor.edx_video_id
     request.POST._mutable = False
     req = django_to_webob_request(request)
     resp = descriptor.studio_transcript(req, "translation")
+    descriptor.download_track = True
+    descriptor.save_with_metadata(user)
+    modulestore().publish(descriptor.location, user.id)
     return webob_to_django_response(resp)
