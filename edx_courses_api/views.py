@@ -187,13 +187,7 @@ def export_status(request, course_key_string, filename=None):
         if isinstance(artifact.file.storage, FileSystemStorage):
             output_url = reverse_course_url('export_output_handler', course_key)
         elif isinstance(artifact.file.storage, S3Boto3Storage):
-            filename = os.path.basename(artifact.file.name)
-            disposition = u'attachment; filename="{}"'.format(filename)
-            output_url = artifact.file.storage.url(artifact.file.name, response_headers={
-                'response-content-disposition': disposition,
-                'response-content-encoding': 'application/octet-stream',
-                'response-content-type': 'application/x-tgz'
-            })
+            output_url = artifact.file.storage.url(artifact.file.name)
         else:
             output_url = artifact.file.storage.url(artifact.file.name)
     elif task_status.state in (UserTaskStatus.FAILED, UserTaskStatus.CANCELED):
