@@ -93,6 +93,12 @@ class CourseView(APIView):
             mode_slug=CourseMode.HONOR,
             defaults={"mode_display_name": "Honor"},
         )
+        log.info('Adding audit course mode')
+        CourseMode.objects.get_or_create(
+            course_id=course_key,
+            mode_slug=CourseMode.AUDIT,
+            defaults={"mode_display_name": "Audit"},
+        )
         log.info('Enabling self generated certificates')
         CertificateGenerationCourseSetting.objects.get_or_create(
             course_key=course_key,
