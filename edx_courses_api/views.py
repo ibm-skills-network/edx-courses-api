@@ -18,7 +18,7 @@ from django.contrib.auth.models import User
 from django.core.files.storage import FileSystemStorage
 
 # edx imports
-from openedx.core.djangoapps.content.course_overviews.models import CourseOverview
+from openedx.core.djangoapps.content.course_modes.models import CourseMode
 from cms.djangoapps.contentstore.views.course import create_new_course_in_store
 from cms.djangoapps.contentstore.utils import delete_course
 from xmodule.modulestore.exceptions import DuplicateCourseError
@@ -93,6 +93,12 @@ class CourseView(APIView):
             raise ParseError(msg)
 
     def finalize_course(self, course_key, certificate_enabled):
+        log.info('Adding audit course mode')
+        CourseMode.objects.get_or_create(
+            course_id=course_key,
+            mode_slug=CourseMode.AUDIT,
+            defaults={"mode_display_name": "Audit"},
+        )
         log.info('Adding honor course mode')
         CourseMode.objects.get_or_create(
             course_id=course_key,
