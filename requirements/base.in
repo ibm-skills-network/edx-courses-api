@@ -1,5 +1,5 @@
 # Core requirements for using this application
 -c constraints.txt
 
-Django>=1.11              # Web application framework
+Django>=5.2.15            # Web application framework (>=5.2.15 LTS clears Mend CVEs, see constraints.txt)
 djangorestframework>=3.9

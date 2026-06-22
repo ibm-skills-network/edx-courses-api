@@ -8,5 +8,9 @@
 # pin when possible.  Writing an issue against the offending project and
 # linking to it here is good.
 
-# code-annotations currently restricts to Django<2.3
-Django<2.3
+# Django is pinned to a patched LTS release to remediate the Mend dependency
+# vulnerabilities reported against the previously unbounded "Django>=1.11"
+# (django-5.2.7 resolved to 22 CVEs, highest severity 9.8). Django 5.2.15 is the
+# 5.2 LTS patch that fixes all reported CVEs; keep on a patched 5.2.x LTS release.
+# See: https://github.com/ibm-skills-network/edx-courses-api/issues/16
+Django>=5.2.15,<5.3
