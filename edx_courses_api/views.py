@@ -14,8 +14,9 @@ from rest_framework.response import Response
 from rest_framework.exceptions import ParseError
 from rest_framework import status
 from rest_framework.authentication import BasicAuthentication
-from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth.models import User
+
+from .permissions import IsServiceAccount
 from django.core.files.storage import FileSystemStorage
 
 # edx imports
@@ -48,7 +49,7 @@ USERNAME = 'admin' # the user who will be associated with new courses
 class CourseView(APIView):
 
     authentication_classes = [BasicAuthentication]
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsServiceAccount]
 
     def delete(self, request, course_key_string):
         course_key = CourseKey.from_string(course_key_string)
@@ -112,7 +113,7 @@ def set_visibility(course_key, visibility):
 
 @api_view(['POST'])
 @authentication_classes([BasicAuthentication])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsServiceAccount])
 def hide(request, course_key_string):
     course_key = CourseKey.from_string(course_key_string)
     set_visibility(course_key, "none")
@@ -120,7 +121,7 @@ def hide(request, course_key_string):
 
 @api_view(['POST'])
 @authentication_classes([BasicAuthentication])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsServiceAccount])
 def show(request, course_key_string):
     course_key = CourseKey.from_string(course_key_string)
     set_visibility(course_key, "both")
@@ -128,7 +129,7 @@ def show(request, course_key_string):
 
 @api_view(['POST'])
 @authentication_classes([BasicAuthentication])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsServiceAccount])
 def export(request, course_key_string):
     """
     Trigger the async export job
@@ -160,7 +161,7 @@ def export(request, course_key_string):
 
 @api_view(['GET'])
 @authentication_classes([BasicAuthentication])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsServiceAccount])
 def export_status(request, course_key_string, filename=None):
     """
     Get export job status
@@ -213,7 +214,7 @@ def export_status(request, course_key_string, filename=None):
 
 @api_view(['GET'])
 @authentication_classes([BasicAuthentication])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsServiceAccount])
 def export_output(request, course_key_string):
     """
     Download the exported archive
@@ -260,7 +261,7 @@ def send_tarball(tarball, size):
 
 @api_view(["POST", "DELETE"])
 @authentication_classes([BasicAuthentication])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsServiceAccount])
 def studio_transcript(request, course_key_string, usage_key_string):
     """
     Upload a transcript for a video in Studio. Refer to the link below for expected parameters.
