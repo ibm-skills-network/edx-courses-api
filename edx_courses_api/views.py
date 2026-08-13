@@ -139,11 +139,13 @@ def set_certificate_settings(request, course_key_string):
 
     try:
         data = json.loads(request.body.decode('utf-8'))
-        enabled = data.get("enabled")
-        enabled = enabled.lower() == 'true'
-    except (json.JSONDecodeError, ValueError, KeyError) as e:
-        return Response({"detail": "Request must include a JSON body with a boolean field 'enabled'."},
+    except (json.JSONDecodeError, ValueError) as e:
+        return Response({"detail": "Request must include a JSON body."},
                         status=status.HTTP_400_BAD_REQUEST)
+
+    # accept a json bool or string, and the legacy 'certificate' key
+    raw_enabled = data.get("enabled", data.get("certificate", "true"))
+    enabled = str(raw_enabled).lower() == 'true'
 
     certificate_generation_setting, created = CertificateGenerationCourseSetting.objects.get_or_create(
         course_key=course_key
@@ -153,9 +155,34 @@ def set_certificate_settings(request, course_key_string):
     certificate_generation_setting.save()
 
     log.info(f"Course: {course_key} now has its certificate generation setting set to {enabled}")
+
+    # persist any custom cert text as context overrides on the course block
+    # edx merges cert_html_view_overrides into the certificate render context
+    override_map = {
+        'custom_certificate_completion_text': 'sn_cert_completion_text',
+        'custom_certificate_course_description_text': 'sn_cert_course_description_text',
+        'custom_certificate_issued_by_text': 'sn_cert_issued_by_text',
+        # boolean hide flags: true -> stored True (line hidden); false/absent -> dropped then popped (line shown)
+        'custom_certificate_hide_course_number_org': 'sn_cert_hide_course_number_org',
+        'custom_certificate_hide_description': 'sn_cert_hide_description',
+    }
+    provided = {ctx_key: data[src] for src, ctx_key in override_map.items() if data.get(src)}
+    store = modulestore()
+    with store.bulk_operations(course_key):
+        course = store.get_course(course_key)
+        overrides = dict(course.cert_html_view_overrides or {})
+        # drop keys the admin cleared, then set the ones they gave us
+        for ctx_key in override_map.values():
+            overrides.pop(ctx_key, None)
+        overrides.update(provided)
+        course.cert_html_view_overrides = overrides
+        store.update_item(course, request.user.id)
+
+    log.info(f"Course: {course_key} cert text overrides now: {list(provided.keys())}")
     return Response({
         'course_key': str(course_key),
         'enabled': enabled,
+        'custom_text_keys': list(provided.keys()),
         'status': 'created' if created else 'updated'
     })
 
