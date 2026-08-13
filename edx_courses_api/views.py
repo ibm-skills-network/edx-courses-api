@@ -20,7 +20,7 @@ from .permissions import IsServiceAccount
 from django.core.files.storage import FileSystemStorage
 
 # edx imports
-from openedx.core.djangoapps.content.course_overviews.models import CourseOverview
+from openedx.core.djangoapps.content.course_modes.models import CourseMode
 from cms.djangoapps.contentstore.views.course import create_new_course_in_store
 from cms.djangoapps.contentstore.utils import delete_course
 from xmodule.modulestore.exceptions import DuplicateCourseError
@@ -51,6 +51,9 @@ class CourseView(APIView):
     authentication_classes = [BasicAuthentication]
     permission_classes = [IsServiceAccount]
 
+    def str_to_bool(self, val):
+        return str(val).lower() == 'true'
+
     def delete(self, request, course_key_string):
         course_key = CourseKey.from_string(course_key_string)
         log.info('DELETING {}'.format(course_key))
@@ -63,7 +66,11 @@ class CourseView(APIView):
         try:
             user = User.objects.get(username=USERNAME)
             course_name = request.data.get("name", "Empty")
-            fields = { "display_name": course_name }
+            
+            # Correctly parse boolean value from request
+            certificate_enabled = self.str_to_bool(request.data.get("certificate_enabled", 'true'))
+
+            fields = {"display_name": course_name}
             new_course = create_new_course_in_store(
                 "split",
                 user,
@@ -74,15 +81,20 @@ class CourseView(APIView):
             )
             msg = u"Created {}".format(new_course.id)
             log.info(msg)
-            self.finalize_course(course_key)
+            self.finalize_course(course_key, certificate_enabled)
             return Response({'detail': msg})
         except DuplicateCourseError:
             msg = u"Course already exists for {}, {}, {}".format(course_key.org, course_key.course, course_key.run)
             log.warning(msg)
             raise ParseError(msg)
 
-
-    def finalize_course(self, course_key):
+    def finalize_course(self, course_key, certificate_enabled):
+        log.info('Adding audit course mode')
+        CourseMode.objects.get_or_create(
+            course_id=course_key,
+            mode_slug=CourseMode.AUDIT,
+            defaults={"mode_display_name": "Audit"},
+        )
         log.info('Adding honor course mode')
         CourseMode.objects.get_or_create(
             course_id=course_key,
@@ -92,7 +104,7 @@ class CourseView(APIView):
         log.info('Enabling self generated certificates')
         CertificateGenerationCourseSetting.objects.get_or_create(
             course_key=course_key,
-            self_generation_enabled=True,
+            self_generation_enabled=certificate_enabled,
         )
         log.info('Enabling LTI fields')
         CourseAllowPIISharingInLTIFlag.objects.get_or_create(
@@ -113,7 +125,66 @@ def set_visibility(course_key, visibility):
 
 @api_view(['POST'])
 @authentication_classes([BasicAuthentication])
-@permission_classes([IsServiceAccount])
+@permission_classes([IsAuthenticated])
+def set_certificate_settings(request, course_key_string):
+    try:
+        course_key = CourseKey.from_string(course_key_string)
+    except Exception as e:
+        log.error(f"Invalid course key: {course_key_string}")
+        return Response({"detail": "Invalid course key."}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+    except (json.JSONDecodeError, ValueError) as e:
+        return Response({"detail": "Request must include a JSON body."},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    # accept a json bool or string, and the legacy 'certificate' key
+    raw_enabled = data.get("enabled", data.get("certificate", "true"))
+    enabled = str(raw_enabled).lower() == 'true'
+
+    certificate_generation_setting, created = CertificateGenerationCourseSetting.objects.get_or_create(
+        course_key=course_key
+    )
+
+    certificate_generation_setting.enabled = enabled
+    certificate_generation_setting.save()
+
+    log.info(f"Course: {course_key} now has its certificate generation setting set to {enabled}")
+
+    # persist any custom cert text as context overrides on the course block
+    # edx merges cert_html_view_overrides into the certificate render context
+    override_map = {
+        'custom_certificate_completion_text': 'sn_cert_completion_text',
+        'custom_certificate_course_description_text': 'sn_cert_course_description_text',
+        'custom_certificate_issued_by_text': 'sn_cert_issued_by_text',
+        # boolean hide flags: true -> stored True (line hidden); false/absent -> dropped then popped (line shown)
+        'custom_certificate_hide_course_number_org': 'sn_cert_hide_course_number_org',
+        'custom_certificate_hide_description': 'sn_cert_hide_description',
+    }
+    provided = {ctx_key: data[src] for src, ctx_key in override_map.items() if data.get(src)}
+    store = modulestore()
+    with store.bulk_operations(course_key):
+        course = store.get_course(course_key)
+        overrides = dict(course.cert_html_view_overrides or {})
+        # drop keys the admin cleared, then set the ones they gave us
+        for ctx_key in override_map.values():
+            overrides.pop(ctx_key, None)
+        overrides.update(provided)
+        course.cert_html_view_overrides = overrides
+        store.update_item(course, request.user.id)
+
+    log.info(f"Course: {course_key} cert text overrides now: {list(provided.keys())}")
+    return Response({
+        'course_key': str(course_key),
+        'enabled': enabled,
+        'custom_text_keys': list(provided.keys()),
+        'status': 'created' if created else 'updated'
+    })
+
+@api_view(['POST'])
+@authentication_classes([BasicAuthentication])
+@permission_classes([IsAuthenticated])
 def hide(request, course_key_string):
     course_key = CourseKey.from_string(course_key_string)
     set_visibility(course_key, "none")
