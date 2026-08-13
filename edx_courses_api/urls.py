@@ -2,7 +2,7 @@
 URLs for edx_courses_api.
 """
 from django.conf import settings
-from django.conf.urls import url
+from django.urls import re_path
 
 from .views import CourseView, hide, show, export, export_output, export_status, xblock_handler, xblock_item_handler, set_certificate_settings
 
@@ -24,9 +24,14 @@ urlpatterns = [
 
 # Since urls.py is executed once, create service user here for server to server auth
 from django.contrib.auth.models import User
-try:
-    User.objects.get(username=settings.AUTH_USERNAME)
-except User.DoesNotExist:
-    User.objects.create_user(username=settings.AUTH_USERNAME,
-                                    email=settings.EMAIL,
-                                    password=settings.AUTH_PASSWORD, is_staff=True)
+import logging
+log = logging.getLogger(__name__)
+
+# if settings.DATABASES != None and settings.DATABASES['default'] != {}:
+#     try:
+#         User.objects.get(username=settings.AUTH_USERNAME)
+#     except User.DoesNotExist:
+#         log.info('CREATING USER WITH USERNAME {}', settings.AUTH_USERNAME)
+#         User.objects.create_user(username=settings.AUTH_USERNAME,
+#                                         email=settings.EMAIL,
+#                                         password=settings.AUTH_PASSWORD, is_staff=True)

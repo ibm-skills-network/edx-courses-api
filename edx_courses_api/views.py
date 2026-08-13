@@ -2,6 +2,7 @@ import logging
 import json
 import logging
 import os
+import uuid
 
 from django.conf import settings
 from django.http import Http404, StreamingHttpResponse
@@ -13,8 +14,9 @@ from rest_framework.response import Response
 from rest_framework.exceptions import ParseError
 from rest_framework import status
 from rest_framework.authentication import BasicAuthentication
-from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth.models import User
+
+from .permissions import IsServiceAccount
 from django.core.files.storage import FileSystemStorage
 
 # edx imports
@@ -24,26 +26,20 @@ from cms.djangoapps.contentstore.utils import delete_course
 from xmodule.modulestore.exceptions import DuplicateCourseError
 from xmodule.modulestore import ModuleStoreEnum
 from opaque_keys.edx.keys import CourseKey, UsageKey
-from xblock.django.request import django_to_webob_request, webob_to_django_response
-from openedx.core.lib.xblock_utils import get_aside_from_xblock, is_xblock_aside
-from contentstore.views.item import StudioEditModuleRuntime
-from xblock.exceptions import NoSuchHandlerError
-from cms.djangoapps.contentstore.views.item import _get_module_info, _get_xblock, _save_xblock
 
-from course_modes.models import CourseMode
+from common.djangoapps.course_modes.models import CourseMode
 from lms.djangoapps.certificates.models import CertificateGenerationCourseSetting
-from xblock_config.models import CourseEditLTIFieldsEnabledFlag
+from lti_consumer.models import CourseAllowPIISharingInLTIFlag
 from xmodule.modulestore.django import modulestore
 from opaque_keys.edx.locator import LibraryLocator
-from storages.backends.s3boto import S3BotoStorage
-from contentstore.storage import course_import_export_storage
-from contentstore.tasks import CourseExportTask, CourseImportTask, export_olx, import_olx
-from contentstore.utils import reverse_course_url, reverse_library_url
+from storages.backends.s3boto3 import S3Boto3Storage
+from cms.djangoapps.contentstore.storage import course_import_export_storage
+from cms.djangoapps.contentstore.tasks import CourseExportTask, export_olx
+from cms.djangoapps.contentstore.utils import reverse_course_url, reverse_library_url
 from user_tasks.models import UserTaskArtifact, UserTaskStatus
 from user_tasks.conf import settings as user_tasks_settings
-
-from .permissions import IsSiteAdminUser
-
+from xblock.django.request import django_to_webob_request, webob_to_django_response
+from cms.djangoapps.contentstore.views.transcripts_ajax import upload_transcripts
 
 log = logging.getLogger(__name__)
 STATUS_FILTERS = user_tasks_settings.USER_TASKS_STATUS_FILTERS
@@ -53,7 +49,7 @@ USERNAME = 'admin' # the user who will be associated with new courses
 class CourseView(APIView):
 
     authentication_classes = [BasicAuthentication]
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsServiceAccount]
 
     def str_to_bool(self, val):
         return str(val).lower() == 'true'
@@ -111,7 +107,7 @@ class CourseView(APIView):
             self_generation_enabled=certificate_enabled,
         )
         log.info('Enabling LTI fields')
-        CourseEditLTIFieldsEnabledFlag.objects.get_or_create(
+        CourseAllowPIISharingInLTIFlag.objects.get_or_create(
             course_id=course_key,
             enabled=True
         )
@@ -196,7 +192,7 @@ def hide(request, course_key_string):
 
 @api_view(['POST'])
 @authentication_classes([BasicAuthentication])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsServiceAccount])
 def show(request, course_key_string):
     course_key = CourseKey.from_string(course_key_string)
     set_visibility(course_key, "both")
@@ -204,7 +200,7 @@ def show(request, course_key_string):
 
 @api_view(['POST'])
 @authentication_classes([BasicAuthentication])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsServiceAccount])
 def export(request, course_key_string):
     """
     Trigger the async export job
@@ -236,7 +232,7 @@ def export(request, course_key_string):
 
 @api_view(['GET'])
 @authentication_classes([BasicAuthentication])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsServiceAccount])
 def export_status(request, course_key_string, filename=None):
     """
     Get export job status
@@ -262,14 +258,8 @@ def export_status(request, course_key_string, filename=None):
         artifact = UserTaskArtifact.objects.get(status=task_status, name='Output')
         if isinstance(artifact.file.storage, FileSystemStorage):
             output_url = reverse_course_url('export_output_handler', course_key)
-        elif isinstance(artifact.file.storage, S3BotoStorage):
-            filename = os.path.basename(artifact.file.name)
-            disposition = u'attachment; filename="{}"'.format(filename)
-            output_url = artifact.file.storage.url(artifact.file.name, response_headers={
-                'response-content-disposition': disposition,
-                'response-content-encoding': 'application/octet-stream',
-                'response-content-type': 'application/x-tgz'
-            })
+        elif isinstance(artifact.file.storage, S3Boto3Storage):
+            output_url = artifact.file.storage.url(artifact.file.name)
         else:
             output_url = artifact.file.storage.url(artifact.file.name)
     elif task_status.state in (UserTaskStatus.FAILED, UserTaskStatus.CANCELED):
@@ -295,7 +285,7 @@ def export_status(request, course_key_string, filename=None):
 
 @api_view(['GET'])
 @authentication_classes([BasicAuthentication])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsServiceAccount])
 def export_output(request, course_key_string):
     """
     Download the exported archive
@@ -317,84 +307,6 @@ def export_output(request, course_key_string):
                 artifact.file.close()
     else:
         raise Http404
-
-@api_view(['POST'])
-@authentication_classes([BasicAuthentication])
-@permission_classes([IsAuthenticated, IsSiteAdminUser])
-def xblock_handler(request, course_key_string, usage_key_string, handler, suffix=''):
-    """
-    Dispatch an AJAX action to an xblock
-
-    Args:
-        usage_id: The usage-id of the block to dispatch to
-        handler (str): The handler to execute
-        suffix (str): The remainder of the url to be passed to the handler
-
-    Returns:
-        :class:`django.http.HttpResponse`: The response from the handler, converted to a
-            django response
-
-    Example:
-    POST ${STUDIO_URL}/sn-api/courses/{course_key}/xblocks/{usage_key}/handler/{handler}/
-
-    See https://github.com/edx/edx-platform/blob/open-release/juniper.master/cms/djangoapps/contentstore/views/component.py#L449
-    """
-    usage_key = UsageKey.from_string(usage_key_string)
-
-    # Let the module handle the AJAX
-    req = django_to_webob_request(request)
-
-    try:
-        if is_xblock_aside(usage_key):
-            # Get the descriptor for the block being wrapped by the aside (not the aside itself)
-            descriptor = modulestore().get_item(usage_key.usage_key)
-            handler_descriptor = get_aside_from_xblock(descriptor, usage_key.aside_type)
-            asides = [handler_descriptor]
-        else:
-            descriptor = modulestore().get_item(usage_key)
-            handler_descriptor = descriptor
-            asides = []
-        handler_descriptor.xmodule_runtime = StudioEditModuleRuntime(request.user)
-        resp = handler_descriptor.handle(handler, req, suffix)
-    except NoSuchHandlerError:
-        log.info(u"XBlock %s attempted to access missing handler %r", handler_descriptor, handler, exc_info=True)
-        raise Http404
-
-    # unintentional update to handle any side effects of handle call
-    # could potentially be updating actual course data or simply caching its values
-    modulestore().update_item(descriptor, request.user.id, asides=asides)
-    log.info('xblock content is updated (course_id: {}, xblock_id: {})'.format(course_key_string, usage_key_string))
-    return webob_to_django_response(resp)
-
-@api_view(['GET', 'POST'])
-@authentication_classes([BasicAuthentication])
-@permission_classes([IsAuthenticated, IsSiteAdminUser])
-def xblock_item_handler(request, course_key_string, usage_key_string):
-    """
-    See https://github.com/edx/edx-platform/blob/open-release/juniper.master/cms/djangoapps/contentstore/views/item.py#L104
-    """
-    usage_key = usage_key_with_run(usage_key_string)
-
-    if request.method == 'GET':
-        with modulestore().bulk_operations(usage_key.course_key):
-            response = _get_module_info(_get_xblock(usage_key, request.user))
-        return Response(response)
-    elif request.method in ('PUT', 'POST'):
-        return _save_xblock(
-            request.user,
-            _get_xblock(usage_key, request.user),
-            data=request.data.get('data'),
-            children_strings=request.data.get('children'),
-            metadata=request.data.get('metadata'),
-            nullout=request.data.get('nullout'),
-            grader_type=request.data.get('graderType'),
-            is_prereq=request.data.get('isPrereq'),
-            prereq_usage_key=request.data.get('prereqUsageKey'),
-            prereq_min_score=request.data.get('prereqMinScore'),
-            prereq_min_completion=request.data.get('prereqMinCompletion'),
-            publish=request.data.get('publish'),
-            fields=request.data.get('fields'),
-        )
 
 def _latest_task_status(request, course_key_string, view_func=None):
     """
@@ -418,10 +330,42 @@ def send_tarball(tarball, size):
     response['Content-Length'] = size
     return response
 
-def usage_key_with_run(usage_key_string):
+@api_view(["POST", "DELETE"])
+@authentication_classes([BasicAuthentication])
+@permission_classes([IsServiceAccount])
+def studio_transcript(request, course_key_string, usage_key_string):
     """
-    Converts usage_key_string to a UsageKey, adding a course run if necessary
+    Upload a transcript for a video in Studio. Refer to the link below for expected parameters.
+    see: https://github.com/openedx/edx-platform/blob/d4f3c373269b212471a3d1bc38db5117c872efb5/xmodule/video_block/video_handlers.py#L471
+
+    POST /sn-api/courses/<course_key>/xblock/<xblock_id>/handler/studio_transcript/translation/
     """
     usage_key = UsageKey.from_string(usage_key_string)
-    usage_key = usage_key.replace(course_key=modulestore().fill_in_run(usage_key.course_key))
-    return usage_key
+    # TODO: catch `xmodule.modulestore.exceptions.ItemNotFoundError` for when item with usage_key does not exist.
+    descriptor = modulestore().get_item(usage_key)
+    user = User.objects.get(username=USERNAME)
+
+    # no subtitles yet, handle the default case
+    if descriptor.available_translations(descriptor.get_transcripts_info(), verify_assets=True) == []:
+        request.POST._mutable = True
+        request.POST['locator'] = usage_key_string
+        request.POST['edx_video_id'] = descriptor.edx_video_id
+        request.POST._mutable = False
+        request.FILES['transcript-file'] = request.FILES['file']
+
+        descriptor.download_track = True
+        descriptor.save_with_metadata(user)
+
+        result = upload_transcripts(request)
+        modulestore().publish(descriptor.location, user.id)
+        return result
+
+    request.POST._mutable = True
+    request.POST['edx_video_id'] = descriptor.edx_video_id
+    request.POST._mutable = False
+    req = django_to_webob_request(request)
+    resp = descriptor.studio_transcript(req, "translation")
+    descriptor.download_track = True
+    descriptor.save_with_metadata(user)
+    modulestore().publish(descriptor.location, user.id)
+    return webob_to_django_response(resp)

@@ -39,3 +39,7 @@ LOCALE_PATHS = [
 ROOT_URLCONF = 'edx_courses_api.urls'
 
 SECRET_KEY = 'insecure-secret-key'
+
+AUTH_USERNAME = 'testservice'
+AUTH_PASSWORD = 'testservice'
+EMAIL = AUTH_USERNAME + '@skills.network'
