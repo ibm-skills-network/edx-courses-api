@@ -9,3 +9,4 @@
 # linking to it here is good.
 
 Django>=5.2.15,<6.0
+djangorestframework>=3.17.2,<4.0
