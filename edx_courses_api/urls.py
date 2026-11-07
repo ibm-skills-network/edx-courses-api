@@ -16,17 +16,3 @@ urlpatterns = [
     re_path(fr'^{settings.COURSE_KEY_PATTERN}/xblock/{settings.USAGE_KEY_PATTERN}/handler/studio_transcript/translation/$', studio_transcript, name='studio_transcript'),
     re_path(fr'^{settings.COURSE_KEY_PATTERN}/certificate/settings/$', set_certificate_settings, name='set_certificate_settings'),
 ]
-
-# Since urls.py is executed once, create service user here for server to server auth
-from django.contrib.auth.models import User
-import logging
-log = logging.getLogger(__name__)
-
-# if settings.DATABASES != None and settings.DATABASES['default'] != {}:
-#     try:
-#         User.objects.get(username=settings.AUTH_USERNAME)
-#     except User.DoesNotExist:
-#         log.info('CREATING USER WITH USERNAME {}', settings.AUTH_USERNAME)
-#         User.objects.create_user(username=settings.AUTH_USERNAME,
-#                                         email=settings.EMAIL,
-#                                         password=settings.AUTH_PASSWORD, is_staff=True)

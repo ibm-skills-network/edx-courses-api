@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import uuid
 
 from django.conf import settings
 from django.http import Http404, StreamingHttpResponse
