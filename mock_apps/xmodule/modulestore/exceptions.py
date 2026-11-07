@@ -1,0 +1,2 @@
+class DuplicateCourseError(Exception):
+    pass

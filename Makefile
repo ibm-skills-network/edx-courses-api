@@ -1,6 +1,6 @@
 .PHONY: clean compile_translations coverage diff_cover docs dummy_translations \
         extract_translations fake_translations help pii_check pull_translations push_translations \
-        quality requirements selfcheck test test-all upgrade validate
+        quality requirements selfcheck test install edx-sources clean-test test-all upgrade validate
 
 .DEFAULT_GOAL := help
 
@@ -57,8 +57,6 @@ requirements: ## install development environment requirements
 	pip install -qr requirements/pip-tools.txt
 	pip-sync requirements/dev.txt requirements/private.*
 
-test: clean ## run tests in the current virtualenv
-	pytest
 
 diff_cover: test ## find diff lines that need test coverage
 	diff-cover coverage.xml
@@ -96,3 +94,54 @@ dummy_translations: ## generate dummy translation (.po) files
 build_dummy_translations: extract_translations dummy_translations compile_translations ## generate and compile dummy translation files
 
 validate_translations: build_dummy_translations detect_changed_source_translations ## validate translations
+
+## Tests against one Open edX release
+
+# The Open edX release to test against. Each one has its own constraints file,
+# edx-platform tag and Python version, below.
+RELEASE ?= verawood
+
+ifeq ($(RELEASE),redwood)
+PYTHON ?= python3.11
+EDX_PLATFORM_REF ?= open-release/redwood.2
+else ifeq ($(RELEASE),verawood)
+PYTHON ?= python3.12
+EDX_PLATFORM_REF ?= release/verawood.2
+else
+$(error RELEASE must be redwood or verawood, not $(RELEASE))
+endif
+
+VENV ?= .venv-$(RELEASE)
+BIN := $(VENV)/bin
+CONSTRAINTS := tests/constraints-$(RELEASE).txt
+EDX_SOURCES ?= .edx-sources/$(RELEASE)
+# Studio installs these and the plugin imports them, but setup.py does not list them.
+FROM_EDX_PLATFORM := edx-opaque-keys XBlock[django]
+
+test: install edx-sources ## run the tests against RELEASE (redwood or verawood, default verawood)
+	EDX_PLATFORM_ROOT=$(EDX_SOURCES)/edx-platform $(BIN)/pytest
+
+install: $(BIN)/pytest
+
+$(BIN)/pytest: Makefile $(CONSTRAINTS) setup.py requirements/base.in
+	$(PYTHON) -m venv $(VENV)
+	$(BIN)/pip install --quiet --upgrade pip
+	$(BIN)/pip install --quiet -c $(CONSTRAINTS) pytest pytest-cov pytest-django $(FROM_EDX_PLATFORM) -e .
+	touch $@
+
+# The edx-platform source tests/test_edx_contract.py reads. Only the directories
+# that hold a stand-in in mock_apps are checked out. Cone-mode sparse checkout
+# also brings the files sitting directly in each parent directory.
+EDX_STUB_DIRS := $(sort $(patsubst %/,%,$(dir $(shell cd mock_apps && find cms common lms openedx xmodule -name '*.py' 2>/dev/null))))
+
+edx-sources: $(EDX_SOURCES)/edx-platform/.sparse-$(RELEASE)
+
+$(EDX_SOURCES)/edx-platform/.sparse-$(RELEASE): Makefile $(shell find mock_apps -name '*.py')
+	rm -rf $(EDX_SOURCES)/edx-platform
+	git clone --quiet --depth 1 --branch $(EDX_PLATFORM_REF) --filter=blob:none --sparse \
+		https://github.com/openedx/edx-platform.git $(EDX_SOURCES)/edx-platform
+	git -C $(EDX_SOURCES)/edx-platform sparse-checkout set $(EDX_STUB_DIRS)
+	touch $@
+
+clean-test: ## remove the test virtualenvs and edx-platform source
+	rm -rf .venv-redwood .venv-verawood .edx-sources
