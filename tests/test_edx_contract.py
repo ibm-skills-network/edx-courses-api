@@ -56,11 +56,35 @@ def _parse(path):
 
 
 def _real_module(module):
+    """The parsed real module, and the package its relative imports start from."""
     base = _platform_root().joinpath(*module.split('.'))
-    for candidate in (base.with_suffix('.py'), base / '__init__.py'):
-        if candidate.is_file():
-            return _parse(str(candidate))
+    if base.with_suffix('.py').is_file():
+        return _parse(str(base.with_suffix('.py'))), module.rpartition('.')[0]
+    if (base / '__init__.py').is_file():
+        return _parse(str(base / '__init__.py')), module
     pytest.fail(f'{module} is not in edx-platform at {_platform_root()}')
+
+
+def _find_real(module, name):
+    """
+    The real definition of name in module, or 'bound' when an import or assignment binds it.
+
+    Follows ``from .x import *``, which is how student.models exposes CourseEnrollment.
+    None when the name is not there.
+    """
+    tree, package = _real_module(module)
+    defs = _defs(tree.body)
+    if name in defs:
+        return defs[name]
+    if name in _bound_names(tree.body):
+        return 'bound'
+    for node in tree.body:
+        if (isinstance(node, ast.ImportFrom) and node.level == 1 and node.module
+                and any(a.name == '*' for a in node.names)):
+            found = _find_real(f'{package}.{node.module}', name)
+            if found is not None:
+                return found
+    return None
 
 
 def _params(func):
@@ -169,7 +193,18 @@ def _check(stub, real, where):
     elif isinstance(stub, ast.ClassDef):
         assert isinstance(real, ast.ClassDef), f'{where} is not a class in edx-platform'
         real_defs = _defs(real.body)
-        for name, member in _defs(stub.body).items():
+        stub_defs = _defs(stub.body)
+        # A Django model has no __init__ of its own. It takes its fields as keyword
+        # arguments. So when the real class defines no __init__, every parameter of the
+        # stand-in's __init__ has to be a name the real class body assigns. Without this
+        # a renamed field passes here, and the real constructor raises TypeError.
+        init = stub_defs.get('__init__')
+        if init is not None and '__init__' not in real_defs:
+            fields = _bound_names(real.body)
+            for param, kind, _ in _params(init):
+                if kind in ('positional', 'keyword-only'):
+                    assert param in fields, f'{where} has no field {param} in edx-platform'
+        for name, member in stub_defs.items():
             # A model's DoesNotExist comes from Django, not from the class body.
             if name == 'DoesNotExist' or not _public(name):
                 continue
@@ -181,14 +216,9 @@ def _check(stub, real, where):
 def test_stand_in_matches_edx_platform(module, name):
     stub_path = next(p for p in MOCK_APPS.rglob('*.py') if _module_name(p) == module)
     stub_defs, _ = _stub_names(_stub_body(_parse(str(stub_path))))
-    real_tree = _real_module(module)
-    real_defs = _defs(real_tree.body)
+    real = _find_real(module, name)
+    assert real is not None, f'{module} has no {name} in edx-platform'
     stub_def = stub_defs.get(name)
-    if stub_def is None:
-        assert name in real_defs or name in _bound_names(real_tree.body), f'{module} has no {name} in edx-platform'
-        return
-    if name not in real_defs:
-        # Bound by an import or assignment in the real module, so only the name can be checked.
-        assert name in _bound_names(real_tree.body), f'{module} has no {name} in edx-platform'
-        return
-    _check(stub_def, real_defs[name], f'{module}.{name}')
+    # A name the real module binds by an import or assignment can only be checked by name.
+    if stub_def is not None and real != 'bound':
+        _check(stub_def, real, f'{module}.{name}')

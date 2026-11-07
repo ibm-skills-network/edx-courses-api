@@ -136,7 +136,7 @@ $(BIN)/pytest: Makefile $(CONSTRAINTS) setup.py requirements/base.in
 # sitting directly in each of its parents. So naming lms because of
 # mock_apps/lms/__init__.py would check out all of lms. Naming lms/djangoapps/instructor
 # already brings lms/__init__.py.
-EDX_STUB_DIRS := $(shell cd mock_apps && find cms common lms openedx xmodule -name '*.py' 2>/dev/null \
+EDX_STUB_DIRS = $(shell cd mock_apps && find cms common lms openedx xmodule -name '*.py' 2>/dev/null \
 	| xargs -n1 dirname | sort -u \
 	| awk '{ d[NR] = $$0 } END { for (i = 1; i <= NR; i++) { leaf = 1; for (j = 1; j <= NR; j++) if (index(d[j], d[i] "/") == 1) leaf = 0; if (leaf) print d[i] } }')
 
