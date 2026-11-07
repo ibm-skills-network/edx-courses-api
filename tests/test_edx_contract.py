@@ -11,17 +11,26 @@ the whole Open edX dependency tree. ``make test`` checks out the release's sourc
 and sets EDX_PLATFORM_ROOT.
 
 Only modules under edx-platform's own top-level packages are checked. Stand-ins
-for other packages (lti_consumer, user_tasks and the like) are not.
+for other packages (lti_consumer, user_tasks and the like) are not. Names that
+start with an underscore or are all capitals belong to the stand-in itself and
+are not checked either.
+
+A stand-in whose signature differs between releases defines each version under
+``if RELEASE == '<release>':``. Only the block for the release under test is
+checked. Django 4.2 means Redwood and Django 5.2 means Verawood, the same rule
+the stand-ins use.
 """
 import ast
 import functools
 import os
 from pathlib import Path
 
+import django
 import pytest
 
 MOCK_APPS = Path(__file__).resolve().parent.parent / 'mock_apps'
 PLATFORM_PACKAGES = ('cms', 'common', 'lms', 'openedx', 'xmodule')
+RELEASE = 'redwood' if django.VERSION < (5,) else 'verawood'
 
 
 def _platform_root():
@@ -76,15 +85,54 @@ def _bound_names(body):
     return names
 
 
+def _is_release_block(node):
+    return (
+        isinstance(node, ast.If)
+        and isinstance(node.test, ast.Compare)
+        and isinstance(node.test.left, ast.Name) and node.test.left.id == 'RELEASE'
+        and isinstance(node.test.ops[0], ast.Eq)
+        and isinstance(node.test.comparators[0], ast.Constant)
+    )
+
+
+def _stub_body(tree):
+    """The stand-in's top-level statements, with only this release's `if RELEASE ==` blocks kept."""
+    body = []
+    for node in tree.body:
+        while _is_release_block(node):
+            if node.test.comparators[0].value == RELEASE:
+                body.extend(node.body)
+                break
+            if len(node.orelse) == 1 and _is_release_block(node.orelse[0]):
+                node = node.orelse[0]
+                continue
+            body.extend(node.orelse)
+            break
+        else:
+            body.append(node)
+    return body
+
+
+def _public(name):
+    return not name.startswith('_') and not name.isupper()
+
+
+def _stub_names(body):
+    defs = {name: node for name, node in _defs(body).items() if _public(name)}
+    assigned = {
+        t.id for n in body if isinstance(n, ast.Assign) for t in n.targets
+        if isinstance(t, ast.Name) and _public(t.id)
+    }
+    return defs, assigned
+
+
 def _cases():
     for path in sorted(MOCK_APPS.rglob('*.py')):
         module = _module_name(path)
         if module.split('.')[0] not in PLATFORM_PACKAGES:
             continue
-        tree = _parse(str(path))
-        for name, node in _defs(tree.body).items():
-            yield pytest.param(module, name, id=f'{module}.{name}')
-        for name in sorted(_bound_names(tree.body)):
+        defs, assigned = _stub_names(_stub_body(_parse(str(path))))
+        for name in sorted(set(defs) | assigned):
             yield pytest.param(module, name, id=f'{module}.{name}')
 
 
@@ -97,7 +145,7 @@ def _check(stub, real, where):
         real_defs = _defs(real.body)
         for name, member in _defs(stub.body).items():
             # A model's DoesNotExist comes from Django, not from the class body.
-            if name == 'DoesNotExist':
+            if name == 'DoesNotExist' or not _public(name):
                 continue
             assert name in real_defs, f'{where}.{name} is not defined on the class in edx-platform'
             _check(member, real_defs[name], f'{where}.{name}')
@@ -105,10 +153,11 @@ def _check(stub, real, where):
 
 @pytest.mark.parametrize('module, name', list(_cases()))
 def test_stand_in_matches_edx_platform(module, name):
-    stub_tree = _parse(str(next(p for p in MOCK_APPS.rglob('*.py') if _module_name(p) == module)))
+    stub_path = next(p for p in MOCK_APPS.rglob('*.py') if _module_name(p) == module)
+    stub_defs, _ = _stub_names(_stub_body(_parse(str(stub_path))))
     real_tree = _real_module(module)
     real_defs = _defs(real_tree.body)
-    stub_def = _defs(stub_tree.body).get(name)
+    stub_def = stub_defs.get(name)
     if stub_def is None:
         assert name in real_defs or name in _bound_names(real_tree.body), f'{module} has no {name} in edx-platform'
         return
