@@ -4,7 +4,7 @@ URLs for edx_courses_api.
 from django.conf import settings
 from django.urls import re_path
 
-from .views import CourseView, hide, show, export, export_output, export_status, studio_transcript
+from .views import CourseView, hide, show, export, export_output, export_status, studio_transcript, set_certificate_settings
 
 urlpatterns = [
     re_path(fr'^{settings.COURSE_KEY_PATTERN}/$', CourseView.as_view(), name='course'),
@@ -14,6 +14,7 @@ urlpatterns = [
     re_path(fr'^{settings.COURSE_KEY_PATTERN}/export_status/$', export_status, name='export_status'),
     re_path(fr'^{settings.COURSE_KEY_PATTERN}/export_output/$', export_output, name='export_output'),
     re_path(fr'^{settings.COURSE_KEY_PATTERN}/xblock/{settings.USAGE_KEY_PATTERN}/handler/studio_transcript/translation/$', studio_transcript, name='studio_transcript'),
+    re_path(fr'^{settings.COURSE_KEY_PATTERN}/certificate/settings/$', set_certificate_settings, name='set_certificate_settings'),
 ]
 
 # Since urls.py is executed once, create service user here for server to server auth

@@ -1,5 +1,8 @@
 # Core requirements for using this application
 -c constraints.txt
 
-Django>=1.11              # Web application framework
-djangorestframework>=3.9
+# The ranges cover the Django and DRF that Redwood (4.2, 3.14) and Verawood (5.2, 3.17)
+# pin. setup.py turns this file into install requirements, so a floor above the
+# platform's pin would upgrade the platform's Django when the plugin is installed.
+Django>=4.2,<6.0          # Web application framework
+djangorestframework>=3.14,<4.0

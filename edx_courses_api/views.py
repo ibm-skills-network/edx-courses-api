@@ -24,6 +24,7 @@ from cms.djangoapps.contentstore.views.course import create_new_course_in_store
 from cms.djangoapps.contentstore.utils import delete_course
 from xmodule.modulestore.exceptions import DuplicateCourseError
 from xmodule.modulestore import ModuleStoreEnum
+from opaque_keys import InvalidKeyError
 from opaque_keys.edx.keys import CourseKey, UsageKey
 
 from common.djangoapps.course_modes.models import CourseMode
@@ -50,6 +51,9 @@ class CourseView(APIView):
     authentication_classes = [BasicAuthentication]
     permission_classes = [IsServiceAccount]
 
+    def str_to_bool(self, val):
+        return str(val).lower() == 'true'
+
     def delete(self, request, course_key_string):
         course_key = CourseKey.from_string(course_key_string)
         log.info('DELETING {}'.format(course_key))
@@ -62,7 +66,9 @@ class CourseView(APIView):
         try:
             user = User.objects.get(username=USERNAME)
             course_name = request.data.get("name", "Empty")
-            fields = { "display_name": course_name }
+            certificate_enabled = self.str_to_bool(request.data.get("certificate_enabled", 'true'))
+
+            fields = {"display_name": course_name}
             new_course = create_new_course_in_store(
                 "split",
                 user,
@@ -73,15 +79,20 @@ class CourseView(APIView):
             )
             msg = u"Created {}".format(new_course.id)
             log.info(msg)
-            self.finalize_course(course_key)
+            self.finalize_course(course_key, certificate_enabled)
             return Response({'detail': msg})
         except DuplicateCourseError:
             msg = u"Course already exists for {}, {}, {}".format(course_key.org, course_key.course, course_key.run)
             log.warning(msg)
             raise ParseError(msg)
 
-
-    def finalize_course(self, course_key):
+    def finalize_course(self, course_key, certificate_enabled):
+        log.info('Adding audit course mode')
+        CourseMode.objects.get_or_create(
+            course_id=course_key,
+            mode_slug=CourseMode.AUDIT,
+            defaults={"mode_display_name": "Audit"},
+        )
         log.info('Adding honor course mode')
         CourseMode.objects.get_or_create(
             course_id=course_key,
@@ -91,7 +102,7 @@ class CourseView(APIView):
         log.info('Enabling self generated certificates')
         CertificateGenerationCourseSetting.objects.get_or_create(
             course_key=course_key,
-            self_generation_enabled=True,
+            self_generation_enabled=certificate_enabled,
         )
         log.info('Enabling LTI fields')
         CourseAllowPIISharingInLTIFlag.objects.get_or_create(
@@ -109,6 +120,53 @@ def set_visibility(course_key, visibility):
     log.info('setting catalog visibility for {} to {}"'.format(course_key, visibility))
     course.catalog_visibility = visibility
     course.save()
+
+@api_view(['POST'])
+@authentication_classes([BasicAuthentication])
+@permission_classes([IsServiceAccount])
+def set_certificate_settings(request, course_key_string):
+    """
+    Turn learner self-generated certificates on or off for a course.
+
+    POST /sn-api/courses/<course_key>/certificate/settings/ with {"enabled": true}.
+    "enabled" may be a JSON boolean or the string "true" or "false".
+    """
+    try:
+        course_key = CourseKey.from_string(course_key_string)
+    except InvalidKeyError:
+        return Response({"detail": "Invalid course key."}, status=status.HTTP_400_BAD_REQUEST)
+
+    enabled = _parse_bool(request.data.get("enabled"))
+    if enabled is None:
+        return Response({"detail": "Request must include a JSON body with a boolean field 'enabled'."},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    # The same write edx-platform's set_self_generation_enabled_for_course makes,
+    # kept here so the response can say whether the row is new.
+    _, created = CertificateGenerationCourseSetting.objects.update_or_create(
+        course_key=course_key,
+        defaults={'self_generation_enabled': enabled},
+    )
+
+    log.info(f"Course: {course_key} now has self-generated certificates set to {enabled}")
+    return Response({
+        'course_key': str(course_key),
+        'enabled': enabled,
+        'status': 'created' if created else 'updated'
+    })
+
+
+def _parse_bool(value):
+    """
+    True or False for a JSON boolean or the strings "true" and "false" in any case.
+    None for anything else, the field missing included.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.lower() in ('true', 'false'):
+        return value.lower() == 'true'
+    return None
+
 
 @api_view(['POST'])
 @authentication_classes([BasicAuthentication])
