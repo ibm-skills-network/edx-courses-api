@@ -4,7 +4,10 @@ Check the edx-platform stand-ins in mock_apps against the real edx-platform sour
 The views are tested against the stand-ins. A stand-in that has drifted from the
 platform lets a test pass while the real call fails. So for every function and
 method a stand-in defines, this checks the real module still has it and that it
-takes the same parameters in the same order.
+takes the same parameters in the same order, each of the same kind (positional or
+keyword-only) and with the same default. A name a stand-in imports from another
+edx-platform module (``grades.api`` importing ``CourseGradeFactory``) has to be bound
+in the real module too, because the views import it from there.
 
 The real source is read with ``ast`` and never imported. Importing it would need
 the whole Open edX dependency tree. ``make test`` checks out the release's source
@@ -17,20 +20,19 @@ are not checked either.
 
 A stand-in whose signature differs between releases defines each version under
 ``if RELEASE == '<release>':``. Only the block for the release under test is
-checked. Django 4.2 means Redwood and Django 5.2 means Verawood, the same rule
-the stand-ins use.
+checked. test_utils.release says which release is under test.
 """
 import ast
 import functools
 import os
 from pathlib import Path
 
-import django
 import pytest
+
+from test_utils.release import RELEASE
 
 MOCK_APPS = Path(__file__).resolve().parent.parent / 'mock_apps'
 PLATFORM_PACKAGES = ('cms', 'common', 'lms', 'openedx', 'xmodule')
-RELEASE = 'redwood' if django.VERSION < (5,) else 'verawood'
 
 
 def _platform_root():
@@ -62,12 +64,25 @@ def _real_module(module):
 
 
 def _params(func):
-    """Parameter names in order, without self or cls."""
-    names = [a.arg for a in func.args.posonlyargs + func.args.args]
-    if names and names[0] in ('self', 'cls'):
-        names = names[1:]
-    names += [a.arg for a in func.args.kwonlyargs]
-    return names
+    """
+    The parameters in order, without self or cls, as (name, kind, default) tuples.
+
+    The default is its source text, or None for a required parameter. Two
+    signatures differ here when a parameter is required in one and optional in
+    the other, keyword-only in one, or has a different default.
+    """
+    args = func.args
+    positional = args.posonlyargs + args.args
+    defaults = [None] * (len(positional) - len(args.defaults)) + list(args.defaults)
+    params = [(a.arg, 'positional', d) for a, d in zip(positional, defaults)]
+    if params and params[0][0] in ('self', 'cls'):
+        params = params[1:]
+    if args.vararg:
+        params.append((args.vararg.arg, 'var-positional', None))
+    params += [(a.arg, 'keyword-only', d) for a, d in zip(args.kwonlyargs, args.kw_defaults)]
+    if args.kwarg:
+        params.append((args.kwarg.arg, 'var-keyword', None))
+    return [(name, kind, None if d is None else ast.unparse(d)) for name, kind, d in params]
 
 
 def _defs(body):
@@ -117,13 +132,24 @@ def _public(name):
     return not name.startswith('_') and not name.isupper()
 
 
+def _reexports(body):
+    """Names a stand-in imports from an edx-platform module, so the real module has to bind them too."""
+    return {
+        a.asname or a.name
+        for n in body
+        if isinstance(n, ast.ImportFrom) and (n.level or (n.module or '').split('.')[0] in PLATFORM_PACKAGES)
+        for a in n.names
+    }
+
+
 def _stub_names(body):
     defs = {name: node for name, node in _defs(body).items() if _public(name)}
-    assigned = {
+    bound = {
         t.id for n in body if isinstance(n, ast.Assign) for t in n.targets
         if isinstance(t, ast.Name) and _public(t.id)
     }
-    return defs, assigned
+    bound |= {name for name in _reexports(body) if _public(name)}
+    return defs, bound
 
 
 def _cases():
@@ -131,8 +157,8 @@ def _cases():
         module = _module_name(path)
         if module.split('.')[0] not in PLATFORM_PACKAGES:
             continue
-        defs, assigned = _stub_names(_stub_body(_parse(str(path))))
-        for name in sorted(set(defs) | assigned):
+        defs, bound = _stub_names(_stub_body(_parse(str(path))))
+        for name in sorted(set(defs) | bound):
             yield pytest.param(module, name, id=f'{module}.{name}')
 
 

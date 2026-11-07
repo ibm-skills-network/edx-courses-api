@@ -61,8 +61,9 @@ requirements: ## install development environment requirements
 diff_cover: test ## find diff lines that need test coverage
 	diff-cover coverage.xml
 
-test-all: quality pii_check ## run tests on every supported Python/Django combination
-	tox
+test-all: quality pii_check ## run tests against every supported Open edX release
+	$(MAKE) test RELEASE=redwood
+	$(MAKE) test RELEASE=verawood
 
 validate: quality pii_check test ## run tests and quality checks
 
@@ -129,10 +130,15 @@ $(BIN)/pytest: Makefile $(CONSTRAINTS) setup.py requirements/base.in
 	$(BIN)/pip install --quiet -c $(CONSTRAINTS) pytest pytest-cov pytest-django $(FROM_EDX_PLATFORM) -e .
 	touch $@
 
-# The edx-platform source tests/test_edx_contract.py reads. Only the directories
-# that hold a stand-in in mock_apps are checked out. Cone-mode sparse checkout
-# also brings the files sitting directly in each parent directory.
-EDX_STUB_DIRS := $(sort $(patsubst %/,%,$(dir $(shell cd mock_apps && find cms common lms openedx xmodule -name '*.py' 2>/dev/null))))
+# The edx-platform source tests/test_edx_contract.py reads. Only the deepest
+# directories that hold a stand-in in mock_apps are checked out. Cone-mode sparse
+# checkout takes a named directory with everything below it, and also the files
+# sitting directly in each of its parents. So naming lms because of
+# mock_apps/lms/__init__.py would check out all of lms. Naming lms/djangoapps/instructor
+# already brings lms/__init__.py.
+EDX_STUB_DIRS := $(shell cd mock_apps && find cms common lms openedx xmodule -name '*.py' 2>/dev/null \
+	| xargs -n1 dirname | sort -u \
+	| awk '{ d[NR] = $$0 } END { for (i = 1; i <= NR; i++) { leaf = 1; for (j = 1; j <= NR; j++) if (index(d[j], d[i] "/") == 1) leaf = 0; if (leaf) print d[i] } }')
 
 edx-sources: $(EDX_SOURCES)/edx-platform/.sparse-$(RELEASE)
 
