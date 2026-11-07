@@ -1,4 +1,4 @@
-import logging
+import inspect
 import json
 import logging
 import os
@@ -35,7 +35,7 @@ from opaque_keys.edx.locator import LibraryLocator
 from storages.backends.s3boto3 import S3Boto3Storage
 from cms.djangoapps.contentstore.storage import course_import_export_storage
 from cms.djangoapps.contentstore.tasks import CourseExportTask, export_olx
-from cms.djangoapps.contentstore.utils import reverse_course_url, reverse_library_url
+from cms.djangoapps.contentstore.utils import load_services_for_studio, reverse_course_url, reverse_library_url
 from user_tasks.models import UserTaskArtifact, UserTaskStatus
 from user_tasks.conf import settings as user_tasks_settings
 from xblock.django.request import django_to_webob_request, webob_to_django_response
@@ -259,6 +259,32 @@ def send_tarball(tarball, size):
     response['Content-Length'] = size
     return response
 
+def _available_translations(video_block):
+    """
+    Language codes the video already has a transcript file for.
+
+    Redwood's VideoBlock answers this itself. From Verawood the block comes from
+    xblocks-contrib and the answer comes from the video_config runtime service, which
+    load_services_for_studio adds.
+    """
+    transcripts = video_block.get_transcripts_info()
+    if hasattr(video_block, 'available_translations'):
+        return video_block.available_translations(transcripts, verify_assets=True)
+    video_config = video_block.runtime.service(video_block, 'video_config')
+    return video_config.available_translations(video_block, transcripts, verify_assets=True)
+
+
+def _save_with_metadata(video_block, user):
+    """
+    Redwood's VideoBlock.save_with_metadata takes the user and Verawood's takes the user id.
+    Verawood hands the value to the modulestore as the editor id, so it has to be the id.
+    """
+    if 'user_id' in inspect.signature(video_block.save_with_metadata).parameters:
+        video_block.save_with_metadata(user.id)
+    else:
+        video_block.save_with_metadata(user)
+
+
 @api_view(["POST", "DELETE"])
 @authentication_classes([BasicAuthentication])
 @permission_classes([IsServiceAccount])
@@ -273,9 +299,12 @@ def studio_transcript(request, course_key_string, usage_key_string):
     # TODO: catch `xmodule.modulestore.exceptions.ItemNotFoundError` for when item with usage_key does not exist.
     descriptor = modulestore().get_item(usage_key)
     user = User.objects.get(username=USERNAME)
+    # Studio does this before it runs any block handler. Without it the block has no
+    # video_config service, and on Verawood studio_transcript answers with an error.
+    load_services_for_studio(descriptor.runtime, user)
 
     # no subtitles yet, handle the default case
-    if descriptor.available_translations(descriptor.get_transcripts_info(), verify_assets=True) == []:
+    if _available_translations(descriptor) == []:
         request.POST._mutable = True
         request.POST['locator'] = usage_key_string
         request.POST['edx_video_id'] = descriptor.edx_video_id
@@ -283,7 +312,7 @@ def studio_transcript(request, course_key_string, usage_key_string):
         request.FILES['transcript-file'] = request.FILES['file']
 
         descriptor.download_track = True
-        descriptor.save_with_metadata(user)
+        _save_with_metadata(descriptor, user)
 
         result = upload_transcripts(request)
         modulestore().publish(descriptor.location, user.id)
@@ -295,6 +324,6 @@ def studio_transcript(request, course_key_string, usage_key_string):
     req = django_to_webob_request(request)
     resp = descriptor.studio_transcript(req, "translation")
     descriptor.download_track = True
-    descriptor.save_with_metadata(user)
+    _save_with_metadata(descriptor, user)
     modulestore().publish(descriptor.location, user.id)
     return webob_to_django_response(resp)
