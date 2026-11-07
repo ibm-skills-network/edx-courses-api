@@ -1,4 +1,3 @@
-import inspect
 import json
 import logging
 import os
@@ -263,8 +262,9 @@ def _available_translations(video_block):
     """
     Language codes the video already has a transcript file for.
 
-    Redwood's VideoBlock answers this itself. From Verawood the block comes from
-    xblocks-contrib and the answer comes from the video_config runtime service, which
+    Redwood's VideoBlock answers this itself. From Verawood neither video block has the
+    method (the built-in one or the xblocks-contrib one that USE_EXTRACTED_VIDEO_BLOCK
+    picks). The answer comes from the video_config runtime service, which
     load_services_for_studio adds.
     """
     transcripts = video_block.get_transcripts_info()
@@ -276,13 +276,13 @@ def _available_translations(video_block):
 
 def _save_with_metadata(video_block, user):
     """
-    Redwood's VideoBlock.save_with_metadata takes the user and Verawood's takes the user id.
-    Verawood hands the value to the modulestore as the editor id, so it has to be the id.
+    Does what VideoBlock.save_with_metadata does, on any release.
+
+    The method takes the user on Redwood and the user id on Verawood. Both bodies are
+    these two lines, and update_item wants the id as the editor.
     """
-    if 'user_id' in inspect.signature(video_block.save_with_metadata).parameters:
-        video_block.save_with_metadata(user.id)
-    else:
-        video_block.save_with_metadata(user)
+    video_block.save()
+    video_block.runtime.modulestore.update_item(video_block, user.id)
 
 
 @api_view(["POST", "DELETE"])
@@ -305,6 +305,8 @@ def studio_transcript(request, course_key_string, usage_key_string):
 
     # no subtitles yet, handle the default case
     if _available_translations(descriptor) == []:
+        if 'file' not in request.FILES:
+            return Response({'detail': 'A transcript file is required.'}, status=status.HTTP_400_BAD_REQUEST)
         request.POST._mutable = True
         request.POST['locator'] = usage_key_string
         request.POST['edx_video_id'] = descriptor.edx_video_id

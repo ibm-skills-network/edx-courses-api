@@ -14,7 +14,11 @@ Change Log
 Unreleased
 ~~~~~~~~~~
 
-*
+Fixed
+_____
+
+* Studio transcript uploads work on Verawood. Both of its video blocks ask the
+  ``video_config`` runtime service for transcripts and save with the user id.
 
 [0.5.2] - 2026-07-17
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
