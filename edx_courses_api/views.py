@@ -16,6 +16,7 @@ from rest_framework import status
 from rest_framework.authentication import BasicAuthentication
 from django.contrib.auth.models import User
 
+from .params import first_present, parse_bool
 from .permissions import IsServiceAccount
 from django.core.files.storage import FileSystemStorage
 
@@ -25,6 +26,7 @@ from cms.djangoapps.contentstore.views.course import create_new_course_in_store
 from cms.djangoapps.contentstore.utils import delete_course
 from xmodule.modulestore.exceptions import DuplicateCourseError
 from xmodule.modulestore import ModuleStoreEnum
+from opaque_keys import InvalidKeyError
 from opaque_keys.edx.keys import CourseKey, UsageKey
 
 from common.djangoapps.course_modes.models import CourseMode
@@ -46,6 +48,25 @@ STATUS_FILTERS = user_tasks_settings.USER_TASKS_STATUS_FILTERS
 
 USERNAME = 'admin' # the user who will be associated with new courses
 
+# Names glados and this plugin have used for "self-generated certificates on".
+# glados sends "certificate" to course creation. The toggle endpoint also takes "enabled".
+CERTIFICATE_FLAG_KEYS = ("certificate_enabled", "certificate")
+
+
+def set_self_generation(course_key, enabled):
+    """
+    Turn self-generated certificates on or off for a course.
+
+    CertificateGenerationCourseSetting has no unique key on course_key, so a course can have
+    several rows. edx-platform reads the newest one. Its set_self_generation_enabled_for_course
+    uses update_or_create, which raises MultipleObjectsReturned on a course with two rows.
+    This sets every row, and makes one if there is none.
+    """
+    rows = CertificateGenerationCourseSetting.objects.filter(course_key=course_key)
+    if not rows.update(self_generation_enabled=enabled):
+        CertificateGenerationCourseSetting.objects.create(course_key=course_key, self_generation_enabled=enabled)
+
+
 class CourseView(APIView):
 
     authentication_classes = [BasicAuthentication]
@@ -63,7 +84,14 @@ class CourseView(APIView):
         try:
             user = User.objects.get(username=USERNAME)
             course_name = request.data.get("name", "Empty")
-            fields = { "display_name": course_name }
+
+            # No flag means certificates on. Callers that never send it get certificates.
+            raw = first_present(request.data, CERTIFICATE_FLAG_KEYS)
+            certificate_enabled = True if raw is None else parse_bool(raw)
+            if certificate_enabled is None:
+                raise ParseError("certificate must be true or false.")
+
+            fields = {"display_name": course_name}
             new_course = create_new_course_in_store(
                 "split",
                 user,
@@ -74,26 +102,22 @@ class CourseView(APIView):
             )
             msg = u"Created {}".format(new_course.id)
             log.info(msg)
-            self.finalize_course(course_key)
+            self.finalize_course(course_key, certificate_enabled)
             return Response({'detail': msg})
         except DuplicateCourseError:
             msg = u"Course already exists for {}, {}, {}".format(course_key.org, course_key.course, course_key.run)
             log.warning(msg)
             raise ParseError(msg)
 
-
-    def finalize_course(self, course_key):
+    def finalize_course(self, course_key, certificate_enabled):
         log.info('Adding honor course mode')
         CourseMode.objects.get_or_create(
             course_id=course_key,
             mode_slug=CourseMode.HONOR,
             defaults={"mode_display_name": "Honor"},
         )
-        log.info('Enabling self generated certificates')
-        CertificateGenerationCourseSetting.objects.get_or_create(
-            course_key=course_key,
-            self_generation_enabled=True,
-        )
+        log.info('Setting self generated certificates to {}'.format(certificate_enabled))
+        set_self_generation(course_key, certificate_enabled)
         log.info('Enabling LTI fields')
         CourseAllowPIISharingInLTIFlag.objects.get_or_create(
             course_id=course_key,
@@ -110,6 +134,30 @@ def set_visibility(course_key, visibility):
     log.info('setting catalog visibility for {} to {}"'.format(course_key, visibility))
     course.catalog_visibility = visibility
     course.save()
+
+@api_view(['POST'])
+@authentication_classes([BasicAuthentication])
+@permission_classes([IsServiceAccount])
+def set_certificate_settings(request, course_key_string):
+    """
+    Turn self-generated certificates on or off for a course.
+
+    POST /sn-api/courses/<course_key>/certificate/settings/
+    Body: {"enabled": true} or {"enabled": "false"}. "certificate" and "certificate_enabled" work too.
+    """
+    try:
+        course_key = CourseKey.from_string(course_key_string)
+    except InvalidKeyError:
+        return Response({"detail": "Invalid course key."}, status=status.HTTP_400_BAD_REQUEST)
+
+    enabled = parse_bool(first_present(request.data, ("enabled",) + CERTIFICATE_FLAG_KEYS))
+    if enabled is None:
+        return Response({"detail": "Body must include 'enabled' set to true or false."},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    set_self_generation(course_key, enabled)
+    log.info('Self generated certificates for {} set to {}'.format(course_key, enabled))
+    return Response({'course_key': str(course_key), 'enabled': enabled})
 
 @api_view(['POST'])
 @authentication_classes([BasicAuthentication])
